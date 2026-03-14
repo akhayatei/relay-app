@@ -179,39 +179,49 @@ async function submitAccept(){
   btn.innerHTML='<span class="spinner"></span> Saving...';
 
   try {
-    // 1. Sauvegarder dans invitations
-    var res = await sb.from('invitations').insert({
-      inviter_name:  inviterName,
-      contact_name:  name,
-      contact_email: email,
-      contact_phone: phone || null,
-      status:        'accepted',
-      accepted_at:   new Date().toISOString()
-    });
-    if(res.error) throw res.error;
+    // Chercher si une invitation pending existe déjà pour cet inviter
+    var existing = await sb.from('invitations')
+      .select('id')
+      .eq('inviter_name', inviterName)
+      .eq('status', 'pending')
+      .order('created_at', {ascending: false})
+      .limit(1)
+      .single();
 
-    // 2. AUTO: Si cette personne est déjà un connecteur → accepted_invite = true + màj role/sector
+    if(existing.data) {
+      // UPDATE la ligne existante
+      var res = await sb.from('invitations').update({
+        contact_name: name,
+        contact_email: email,
+        contact_phone: phone || null,
+        status: 'accepted',
+        accepted_at: new Date().toISOString()
+      }).eq('id', existing.data.id);
+      if(res.error) throw res.error;
+    } else {
+      // INSERT nouvelle ligne
+      var res = await sb.from('invitations').insert({
+        inviter_name: inviterName,
+        contact_name: name,
+        contact_email: email,
+        contact_phone: phone || null,
+        status: 'accepted',
+        accepted_at: new Date().toISOString()
+      });
+      if(res.error) throw res.error;
+    }
+
+    // Mettre à jour accepted_invite dans connectors
     await sb.rpc('accept_invite_by_email', { email_input: email });
 
-    // 3. AUTO: Si pas encore connecteur → l'ajouter comme connecteur avec ses infos
-    var existing = await sb.from('connectors').select('id').eq('email', email).single();
-    if(!existing.data) {
+    // Ajouter comme connecteur si pas encore présent
+    var existingConn = await sb.from('connectors').select('id').eq('email', email).single();
+    if(!existingConn.data) {
       await sb.from('connectors').insert({
-        name: name,
-        email: email,
-        role: role || '',
-        sector: sector || '',
-        accepted_invite: true,
-        intros_count: 0,
-        times_requested: 0,
-        score: 0
+        name: name, email: email, role: role || '',
+        sector: sector || '', accepted_invite: true,
+        intros_count: 0, times_requested: 0, score: 0
       });
-    } else if(role || sector) {
-      // Mettre à jour role/sector si fournis
-      await sb.from('connectors').update({
-        role: role || undefined,
-        sector: sector || undefined
-      }).eq('email', email);
     }
 
     document.getElementById('modalBg').classList.remove('show');
@@ -219,7 +229,7 @@ async function submitAccept(){
     document.getElementById('acceptedOverlay').classList.add('show');
   } catch(err){
     console.error(err);
-    errTxt.textContent='Something went wrong. Please try again.';
+    errTxt.textContent='Something went wrong: ' + (err.message || err);
     errDiv.style.display='block';
     btn.disabled=false;
     btn.innerHTML='Join Relay';

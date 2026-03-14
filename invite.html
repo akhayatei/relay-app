@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>You've been invited to Relay</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',sans-serif;background:#060912;color:#fff;min-height:100vh;overflow-x:hidden;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(24px);}to{opacity:1;transform:translateY(0);}}
+@keyframes float{0%,100%{transform:translateY(0);}50%{transform:translateY(-8px);}}
+@keyframes pulse{0%,100%{opacity:0.6;}50%{opacity:1;}}
+@keyframes spin{to{transform:rotate(360deg);}}
+.f1{animation:fadeUp .6s cubic-bezier(0.16,1,0.3,1) .1s both;}
+.f2{animation:fadeUp .6s cubic-bezier(0.16,1,0.3,1) .25s both;}
+.f3{animation:fadeUp .6s cubic-bezier(0.16,1,0.3,1) .4s both;}
+.f4{animation:fadeUp .6s cubic-bezier(0.16,1,0.3,1) .55s both;}
+.f5{animation:fadeUp .6s cubic-bezier(0.16,1,0.3,1) .7s both;}
+.flt{animation:float 4s ease-in-out infinite;}
+.btn-p{display:block;width:100%;padding:17px;background:#3B82F6;color:#fff;border:none;border-radius:16px;font-size:16px;font-weight:700;font-family:'Inter',sans-serif;cursor:pointer;box-shadow:0 0 40px rgba(59,130,246,.35);transition:all .2s;}
+.btn-p:hover{background:#2563EB;transform:translateY(-1px);}
+.btn-p:disabled{opacity:.6;cursor:not-allowed;transform:none;}
+.btn-s{display:block;width:100%;padding:17px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.65);border:1px solid rgba(255,255,255,.1);border-radius:16px;font-size:15px;font-weight:500;font-family:'Inter',sans-serif;cursor:pointer;margin-top:12px;transition:all .2s;}
+.inp{width:100%;padding:14px 16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:12px;color:#fff;font-size:15px;font-family:'Inter',sans-serif;outline:none;transition:border-color .2s;}
+.inp:focus{border-color:#3B82F6;box-shadow:0 0 0 3px rgba(59,130,246,.15);}
+.inp::placeholder{color:rgba(255,255,255,.25);}
+.lbl{font-size:10px;font-weight:700;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:.1em;display:block;margin-bottom:8px;}
+.overlay{display:none;position:fixed;inset:0;background:#060912;z-index:100;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;text-align:center;}
+.overlay.show{display:flex;}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:50;align-items:flex-end;justify-content:center;}
+.modal-bg.show{display:flex;}
+.modal-box{background:#0F1628;border:1px solid rgba(255,255,255,.1);border-radius:28px 28px 0 0;padding:32px 24px 48px;width:100%;max-width:420px;}
+.spinner{width:18px;height:18px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block;margin-right:8px;vertical-align:middle;}
+</style>
+</head>
+<body>
+
+<div style="position:fixed;top:-150px;left:-150px;width:500px;height:500px;background:radial-gradient(circle,rgba(59,130,246,.12),transparent 65%);pointer-events:none;"></div>
+<div style="position:fixed;bottom:-100px;right:-100px;width:400px;height:400px;background:radial-gradient(circle,rgba(99,102,241,.09),transparent 65%);pointer-events:none;"></div>
+
+<div style="max-width:420px;margin:0 auto;padding:40px 24px 60px;position:relative;z-index:1;">
+
+  <div class="f1" style="display:flex;align-items:center;gap:8px;margin-bottom:48px;">
+    <div style="width:32px;height:32px;background:#3B82F6;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+      <svg width="18" height="18" fill="white" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+    </div>
+    <span style="font-size:16px;font-weight:700;letter-spacing:-.02em;">RELAY</span>
+    <span style="margin-left:auto;font-size:11px;color:rgba(255,255,255,.3);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:4px 10px;">By invitation only</span>
+  </div>
+
+  <div class="f2 flt" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:20px;margin-bottom:32px;display:flex;align-items:center;gap:14px;">
+    <div id="iAvatar" style="width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#1E3A5F,#2563EB);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;flex-shrink:0;">AM</div>
+    <div>
+      <p style="font-size:12px;color:rgba(255,255,255,.4);margin-bottom:4px;font-weight:500;">Personal invitation from</p>
+      <p id="iName" style="font-size:16px;font-weight:700;letter-spacing:-.02em;">Alexandre Martin</p>
+      <p id="iRole" style="font-size:12px;color:rgba(255,255,255,.45);">Entrepreneur</p>
+    </div>
+  </div>
+
+  <div class="f3" style="margin-bottom:32px;">
+    <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.25);border-radius:20px;padding:5px 12px;margin-bottom:18px;">
+      <div style="width:6px;height:6px;border-radius:50%;background:#3B82F6;animation:pulse 2s infinite;"></div>
+      <span style="color:#3B82F6;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;">You've been selected</span>
+    </div>
+    <h1 style="font-size:36px;font-weight:900;line-height:1.08;letter-spacing:-.04em;margin-bottom:16px;">Join the trusted<br><span style="color:#3B82F6;">introduction</span><br>network.</h1>
+    <p style="color:rgba(255,255,255,.5);font-size:15px;line-height:1.7;">Relay connects professionals through warm introductions, not cold outreach. Your contact thinks you belong in this network.</p>
+  </div>
+
+  <div class="f4" style="margin-bottom:32px;">
+    <p style="font-size:10px;font-weight:700;color:rgba(255,255,255,.25);text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px;">How it works</p>
+    <div id="steps"></div>
+  </div>
+
+  <div class="f4" style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.15);border-radius:20px;padding:24px;margin-bottom:32px;text-align:center;">
+    <p style="font-size:10px;font-weight:700;color:rgba(255,255,255,.25);text-transform:uppercase;letter-spacing:.1em;margin-bottom:18px;">Your estimated Relay Score</p>
+    <div style="position:relative;width:110px;height:110px;margin:0 auto 12px;">
+      <svg width="110" height="110" viewBox="0 0 110 110" style="transform:rotate(-90deg);">
+        <circle cx="55" cy="55" r="46" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="8"/>
+        <circle id="sArc" cx="55" cy="55" r="46" fill="none" stroke="#3B82F6" stroke-width="8"
+          stroke-dasharray="289" stroke-dashoffset="289" stroke-linecap="round"
+          style="transition:stroke-dashoffset 1.4s cubic-bezier(0.16,1,0.3,1);"/>
+      </svg>
+      <div id="sVal" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:28px;font-weight:800;color:#3B82F6;letter-spacing:-.03em;">--</div>
+    </div>
+    <p style="color:rgba(255,255,255,.4);font-size:12px;line-height:1.6;">Based on your professional profile.<br>Complete setup to unlock your full score.</p>
+  </div>
+
+  <div class="f5">
+    <button class="btn-p" onclick="openModal()">Accept invitation &rarr;</button>
+    <button class="btn-s">Learn more first</button>
+    <p style="text-align:center;color:rgba(255,255,255,.2);font-size:11px;margin-top:20px;line-height:1.7;">By accepting, you agree to Relay's terms.<br>You control who can reach you at all times.</p>
+  </div>
+</div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal-box">
+    <div style="width:40px;height:4px;background:rgba(255,255,255,.1);border-radius:2px;margin:0 auto 28px;"></div>
+    <h3 style="font-size:20px;font-weight:800;letter-spacing:-.03em;margin-bottom:6px;">Complete your profile</h3>
+    <p style="color:rgba(255,255,255,.45);font-size:13px;margin-bottom:24px;line-height:1.6;">Just a few details so your contact knows you joined.</p>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px;">
+      <div><label class="lbl">Your name</label><input id="cName" class="inp" placeholder="John Smith" type="text"/></div>
+      <div><label class="lbl">Email address</label><input id="cEmail" class="inp" placeholder="john@company.com" type="email"/></div>
+      <div><label class="lbl">Your role / title</label><input id="cRole" class="inp" placeholder="VP Sales, CEO..." type="text"/></div>
+      <div><label class="lbl">Your sector</label><input id="cSector" class="inp" placeholder="Tech, Finance, VC..." type="text"/></div>
+      <div><label class="lbl">Phone (optional)</label><input id="cPhone" class="inp" placeholder="+33 6 00 00 00 00" type="tel"/></div>
+    </div>
+    <div id="errDiv" style="display:none;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;">
+      <p id="errTxt" style="color:#F87171;font-size:12px;font-weight:500;">Please fill in your name and email.</p>
+    </div>
+    <button class="btn-p" id="submitBtn" onclick="submitAccept()">Join Relay</button>
+    <button class="btn-s" onclick="document.getElementById('modalBg').classList.remove('show')">Cancel</button>
+  </div>
+</div>
+
+<div class="overlay" id="acceptedOverlay">
+  <div style="width:80px;height:80px;border-radius:24px;background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.3);display:flex;align-items:center;justify-content:center;font-size:36px;margin-bottom:24px;">&#10003;</div>
+  <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);border-radius:20px;padding:5px 14px;margin-bottom:20px;">
+    <div style="width:6px;height:6px;border-radius:50%;background:#10B981;"></div>
+    <span style="color:#10B981;font-size:11px;font-weight:700;letter-spacing:.04em;">INVITATION ACCEPTED</span>
+  </div>
+  <h2 style="font-size:28px;font-weight:900;letter-spacing:-.03em;margin-bottom:12px;">Welcome to Relay.</h2>
+  <p style="color:rgba(255,255,255,.5);font-size:15px;line-height:1.7;max-width:300px;margin-bottom:12px;">You are now part of the trusted introduction network.</p>
+  <p id="confirmedName" style="color:#3B82F6;font-size:16px;font-weight:700;margin-bottom:32px;"></p>
+  <button class="btn-p" style="max-width:320px;" onclick="window.location.href='https://relay-app-livid.vercel.app'">Open Relay &rarr;</button>
+  <p style="color:rgba(255,255,255,.25);font-size:12px;margin-top:16px;">Your Relay Score will update automatically.</p>
+</div>
+
+<script>
+var sb = supabase.createClient(
+  'https://jgxhkrfojgykriowxfxy.supabase.co',
+  'sb_publishable_5PaqcpOnM6ULZHgj0NN1Pw_kRdGRXyO'
+);
+
+var params = new URLSearchParams(window.location.search);
+var inviterId = params.get('uid') || null;
+var inviterName = params.get('from') || 'Relay User';
+var inviterRole = params.get('role') || 'Entrepreneur';
+var initials = inviterName.split(' ').map(function(w){return w[0];}).join('').slice(0,2).toUpperCase();
+document.getElementById('iName').textContent = inviterName;
+document.getElementById('iRole').textContent = inviterRole;
+document.getElementById('iAvatar').textContent = initials;
+
+document.getElementById('steps').innerHTML = [
+  ['01','Join the network','Accept this invitation to enter the trusted introduction layer.'],
+  ['02','Set your availability','Choose the types of introductions you are open to receiving.'],
+  ['03','Get warm intros','Be reached by the right people, through people you already trust.']
+].map(function(s){
+  return '<div style="display:flex;gap:14px;align-items:flex-start;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:14px;margin-bottom:10px;">' +
+    '<div style="width:28px;height:28px;border-radius:8px;background:rgba(59,130,246,.15);color:#3B82F6;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;">'+s[0]+'</div>' +
+    '<div><p style="color:#fff;font-size:13px;font-weight:600;margin-bottom:3px;">'+s[1]+'</p>' +
+    '<p style="color:rgba(255,255,255,.4);font-size:12px;line-height:1.5;">'+s[2]+'</p></div></div>';
+}).join('');
+
+setTimeout(function(){
+  document.getElementById('sArc').style.strokeDashoffset = 289 - (289 * 74 / 100);
+  document.getElementById('sVal').textContent = 74;
+}, 700);
+
+function openModal(){
+  document.getElementById('modalBg').classList.add('show');
+}
+
+async function submitAccept(){
+  var name   = document.getElementById('cName').value.trim();
+  var email  = document.getElementById('cEmail').value.trim();
+  var role   = document.getElementById('cRole').value.trim();
+  var sector = document.getElementById('cSector').value.trim();
+  var phone  = document.getElementById('cPhone').value.trim();
+  var errDiv = document.getElementById('errDiv');
+  var errTxt = document.getElementById('errTxt');
+  var btn    = document.getElementById('submitBtn');
+
+  if(!name || !email){ errTxt.textContent='Please fill in your name and email.'; errDiv.style.display='block'; return; }
+  if(email.indexOf('@')===-1){ errTxt.textContent='Please enter a valid email address.'; errDiv.style.display='block'; return; }
+
+  errDiv.style.display='none';
+  btn.disabled=true;
+  btn.innerHTML='<span class="spinner"></span> Saving...';
+
+  try {
+    // 1. Sauvegarder dans invitations
+    var res = await sb.from('invitations').insert({
+      inviter_id:      inviterId,
+      inviter_name:    inviterName,
+      contact_name:    name,
+      contact_email:   email,
+      contact_phone:   phone || null,
+      contact_role:    role || null,
+      contact_sector:  sector || null,
+      status:          'accepted',
+      accepted_at:     new Date().toISOString()
+    });
+    if(res.error) throw res.error;
+
+    // 2. AUTO: Si cette personne est déjà un connecteur → accepted_invite = true + màj role/sector
+    await sb.rpc('accept_invite_by_email', { email_input: email });
+
+    // 3. AUTO: Si pas encore connecteur → l'ajouter comme connecteur avec ses infos
+    var existing = await sb.from('connectors').select('id').eq('email', email).single();
+    if(!existing.data) {
+      await sb.from('connectors').insert({
+        name: name,
+        email: email,
+        role: role || '',
+        sector: sector || '',
+        accepted_invite: true,
+        intros_count: 0,
+        times_requested: 0,
+        score: 0
+      });
+    } else if(role || sector) {
+      // Mettre à jour role/sector si fournis
+      await sb.from('connectors').update({
+        role: role || undefined,
+        sector: sector || undefined
+      }).eq('email', email);
+    }
+
+    document.getElementById('modalBg').classList.remove('show');
+    document.getElementById('confirmedName').textContent = name;
+    document.getElementById('acceptedOverlay').classList.add('show');
+  } catch(err){
+    console.error(err);
+    errTxt.textContent='Something went wrong. Please try again.';
+    errDiv.style.display='block';
+    btn.disabled=false;
+    btn.innerHTML='Join Relay';
+  }
+}
+</script>
+</body>
+</html>

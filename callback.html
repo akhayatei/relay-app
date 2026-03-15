@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Relay — Connecting...</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+body{margin:0;background:#060912;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:'Inter',sans-serif;}
+.box{text-align:center;color:white;}
+.logo{width:48px;height:48px;background:#3B82F6;border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;}
+p{color:rgba(255,255,255,.4);font-size:14px;margin-top:8px;}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="logo">
+    <svg width="24" height="24" fill="white" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+  </div>
+  <h2 style="font-size:20px;font-weight:800;letter-spacing:-.03em;">Connecting...</h2>
+  <p>Please wait while we sign you in.</p>
+</div>
+<script>
+const sb = supabase.createClient(
+  'https://jgxhkrfojgykriowxfxy.supabase.co',
+  'sb_publishable_5PaqcpOnM6ULZHgj0NN1Pw_kRdGRXyO'
+);
+
+async function handleCallback() {
+  try {
+    const { data, error } = await sb.auth.exchangeCodeForSession(window.location.search);
+    if (error) {
+      // Essayer avec le hash
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token');
+      if (accessToken) {
+        await sb.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+      }
+    }
+    window.location.href = '/';
+  } catch(e) {
+    console.error(e);
+    window.location.href = '/';
+  }
+}
+
+handleCallback();
+</script>
+</body>
+</html>

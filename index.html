@@ -1,0 +1,1750 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<title>Relay</title>
+<meta name="description" content="Your trusted professional introduction network"/>
+<meta name="theme-color" content="#060912"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Relay"/>
+<link rel="manifest" href="/manifest.json"/>
+<link rel="apple-touch-icon" href="/icon-192.png"/>
+<style>html{height:100%;background:#060912;}body{min-height:100%;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);}</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#0B0F1A;font-family:'Inter',sans-serif;}
+::-webkit-scrollbar{width:0;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+@keyframes shimmer{0%{background-position:-200% 0;}100%{background-position:200% 0;}}
+@keyframes glow{0%,100%{box-shadow:0 0 20px rgba(59,130,246,0.3);}50%{box-shadow:0 0 40px rgba(59,130,246,0.6);}}
+.fu{animation:fadeUp 0.4s cubic-bezier(0.16,1,0.3,1) forwards;}
+.glow{animation:glow 3s ease-in-out infinite;}
+input:focus,textarea:focus{border-color:#3B82F6!important;outline:none;box-shadow:0 0 0 3px rgba(59,130,246,0.15)!important;}
+button{transition:all 0.15s ease;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const SUPABASE_URL = "https://jgxhkrfojgykriowxfxy.supabase.co";
+const SUPABASE_KEY = "sb_publishable_5PaqcpOnM6ULZHgj0NN1Pw_kRdGRXyO";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: {
+    detectSessionInUrl: true,
+    persistSession: true,
+    autoRefreshToken: true,
+  }
+});
+const {useState} = React;
+
+const REQ_TYPES = ["Investment","Partnership","Hiring","Advisory","Business Dev","Expertise"];
+
+// Helper: get initials from name
+const getInitials = name => name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+
+// Helper: time ago
+const timeAgo = (dateStr) => {
+  if(!dateStr) return "just now";
+  const diff = Math.floor((Date.now() - new Date(dateStr)) / 1000);
+  if(diff < 60) return diff+"s";
+  if(diff < 3600) return Math.floor(diff/60)+"m";
+  if(diff < 86400) return Math.floor(diff/3600)+"h";
+  return Math.floor(diff/86400)+"d";
+};
+
+// ── RELAY SCORE ALGORITHM ───────────────────────────────────
+// Priorité : Sollicitations(40) + Intros faites(30) + A rejoint(15) + Secteur(10) + Poste(5)
+const calcRelayScore = (c) => {
+  let score = 0;
+
+  // 1. Fois sollicité en intro (40 pts max — 4 pts par sollicitation, max 10)
+  const requested = Math.min(c.times_requested || 0, 10);
+  score += requested * 4;
+
+  // 2. Intros acceptées / faites (30 pts max — 3 pts par intro, max 10)
+  const intros = Math.min(c.intros_count || 0, 10);
+  score += intros * 3;
+
+  // 3. A rejoint Relay (15 pts)
+  if (c.accepted_invite) score += 15;
+
+  // 4. Secteur (10 pts max)
+  const sector = (c.sector || "").toLowerCase();
+  if (sector.includes("vc") || sector.includes("venture") || sector.includes("invest")) score += 10;
+  else if (sector.includes("tech") || sector.includes("finance") || sector.includes("fintech")) score += 8;
+  else if (sector.includes("consulting") || sector.includes("banking")) score += 6;
+  else if (sector) score += 3;
+
+  // 5. Poste (5 pts max)
+  const role = (c.role || "").toLowerCase();
+  if (role.includes("ceo") || role.includes("founder") || role.includes("president") || role.includes("partner")) score += 5;
+  else if (role.includes("cto") || role.includes("coo") || role.includes("cfo") || role.includes("vp")) score += 4;
+  else if (role.includes("director") || role.includes("head")) score += 3;
+  else if (role.includes("manager") || role.includes("lead")) score += 2;
+  else if (role) score += 1;
+
+  return Math.min(score, 100);
+};
+
+function App() {
+  const {useState, useEffect} = React;
+  const [screen,setScreen] = useState("landing");
+  const [tab,setTab] = useState("home");
+  const [selConn,setSelConn] = useState(null);
+  const [selTarget,setSelTarget] = useState(null);
+  const [form,setForm] = useState({target:"",reason:"",connector:null,rtype:""});
+  const [notifs,setNotifs] = useState([]);
+  const [connectors,setConnectors] = useState([]);
+  const [targets,setTargets] = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [myViz,setMyViz] = useState({visible:true,openFor:["Partnership","Advisory"],bio:""});
+  const [networkStats,setNetworkStats] = useState({invited:0,joined:0});
+  const [myNetwork,setMyNetwork] = useState([]);
+  const [unreadMessages,setUnreadMessages] = useState(0);
+  const [selConversation,setSelConversation] = useState(null); // profile to chat with
+
+  // ── AUTH STATE ──────────────────────────────────────────
+  const [session,setSession] = useState(null);
+  const [profile,setProfile] = useState(null);
+  const [authScreen,setAuthScreen] = useState("login"); // login | signup | setup
+
+  useEffect(()=>{
+    // Gérer le callback OAuth (LinkedIn etc.)
+    sb.auth.onAuthStateChange((event, session) => {
+      if(event === "SIGNED_IN" && session) {
+        setSession(session);
+        loadProfile(session.user.id);
+      } else if(event === "SIGNED_OUT") {
+        setSession(null);
+        setProfile(null);
+        setLoading(false);
+      }
+    });
+
+    sb.auth.getSession().then(({data:{session}})=>{
+      setSession(session);
+      if(session) loadProfile(session.user.id);
+      else setLoading(false);
+    });
+  },[]);
+
+  const loadProfile = async (userId) => {
+    const {data} = await sb.from("profiles").select("*").eq("id",userId).single();
+
+    // Récupérer métadonnées LinkedIn si disponibles
+    const { data:{ user } } = await sb.auth.getUser();
+    const meta = user?.user_metadata || {};
+    const linkedInName = meta.full_name || meta.name || "";
+    const linkedInAvatar = meta.avatar_url || meta.picture || "";
+
+    if(data) {
+      // Pré-remplir depuis LinkedIn si profil vide
+      if(!data.name && linkedInName) {
+        await sb.from("profiles").update({
+          name: linkedInName,
+          linkedin_avatar: linkedInAvatar,
+          email: user?.email || ""
+        }).eq("id", userId);
+        data.name = linkedInName;
+        data.linkedin_avatar = linkedInAvatar;
+      }
+      setProfile({...data, linkedin_avatar: linkedInAvatar});
+      setMyViz({visible:data.visible, openFor:data.open_for||[], bio:data.bio||""});
+      if(!data.name || !data.role) { setLoading(false); setAuthScreen("setup"); return; }
+    }
+    await loadData(userId);
+  };
+
+  async function loadData(userId) {
+    const uid = userId || session?.user?.id;
+    setLoading(true);
+    try {
+      // Trouver le connector_id de l'utilisateur connecté
+      const {data: myConnector} = await sb.from("connectors").select("id").eq("user_id", uid).single();
+      const myConnectorId = myConnector?.id;
+
+      const [connRes, targRes, reqRes, invRes] = await Promise.all([
+        sb.from("connectors").select("*").order("score", {ascending:false}),
+        sb.from("profiles").select("*").eq("visible", true).neq("id", uid),
+        myConnectorId
+          ? sb.from("requests").select("*").eq("connector_id", myConnectorId).eq("status","pending").order("created_at",{ascending:false})
+          : Promise.resolve({data:[]}),
+        sb.from("invitations").select("*").eq("inviter_id", uid).order("created_at",{ascending:false}),
+      ]);
+      // Emails des contacts déjà dans mon Network
+      const myContactEmails = (invRes.data||[]).map(i=>i.contact_email).filter(Boolean);
+
+      if(connRes.data) setConnectors(connRes.data.map(c=>({...c, initials:getInitials(c.name), avatar:getInitials(c.name), acc:c.accept_rate, intros:c.intros_count, score:calcRelayScore(c)})).sort((a,b)=>b.score-a.score));
+      if(targRes.data) setTargets(targRes.data
+        .filter(p=>p.name && p.role)
+        .filter(p=>!myContactEmails.includes(p.email)) // exclure mes contacts Network
+        .map(p=>({
+          ...p,
+          openFor: p.open_for||[],
+          via: [],
+          avatar: getInitials(p.name),
+          bio: p.bio||""
+        })));
+      if(reqRes.data) setNotifs(reqRes.data.map(r=>({
+        id: r.id,
+        type: "req",
+        from: r.requester_name || "Someone",
+        via: r.connector_id || "",
+        context: r.message || "",
+        rtype: r.request_type || "",
+        connector_id: r.connector_id,
+        requester_email: r.requester_email || "",
+        target_name: r.target_name || "",
+        time: timeAgo(r.created_at),
+        read: false,
+        accepted: r.status === "accepted"
+      })));
+      if(invRes.data) {
+        setMyNetwork(invRes.data);
+        setNetworkStats({
+          invited: invRes.data.length,
+          joined: invRes.data.filter(i=>i.status==="accepted").length
+        });
+      }
+    } catch(e) { console.error(e); }
+    setLoading(false);
+  }
+
+  const visibleTargets = targets.filter(t=>t.visible&&t.name&&t.role);
+  const unread = notifs.filter(n=>!n.read).length;
+  const go=(sc,tb)=>{setScreen(sc);if(tb)setTab(tb);};
+  const acceptN = async (id) => {
+    const notif = notifs.find(n=>n.id===id);
+    setNotifs(ns=>ns.map(n=>n.id===id?{...n,accepted:true,read:true}:n));
+    await sb.from("requests").update({status:"accepted"}).eq("id",id);
+    if(notif?.connector_id) {
+      await sb.rpc("increment_intros_count", { connector_id_input: notif.connector_id });
+      const r = await sb.from("connectors").select("*");
+      if(r.data) setConnectors(r.data.map(c=>({...c,initials:getInitials(c.name),avatar:getInitials(c.name),acc:c.accept_rate,intros:c.intros_count,score:calcRelayScore(c)})).sort((a,b)=>b.score-a.score));
+    }
+    // Email au demandeur — intro acceptée
+    if(notif?.requester_email) {
+      await sendEmail(
+        notif.requester_email,
+        `✅ Your intro request was accepted — ${notif.target_name || ""}`,
+        `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px;background:#0B0F1A;color:#fff;border-radius:16px;">
+          <h2 style="font-size:22px;font-weight:800;margin-bottom:8px;">Your introduction was accepted! 🎉</h2>
+          <p style="color:rgba(255,255,255,.6);margin-bottom:24px;">${profile?.name || "Your connector"} has accepted to introduce you to <strong style="color:#fff">${notif.target_name || "the target"}</strong>.</p>
+          <p style="color:rgba(255,255,255,.6);">You will be connected shortly. Stay tuned!</p>
+          <a href="https://relayintro.com" style="display:inline-block;background:#10B981;color:#fff;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:700;margin-top:24px;">Open Relay →</a>
+        </div>`
+      );
+    }
+  };
+
+  const declineN = async (id) => {
+    setNotifs(ns=>ns.filter(n=>n.id!==id));
+    await sb.from("requests").update({status:"declined"}).eq("id",id);
+  };
+
+  const handleSignOut = async () => {
+    await sb.auth.signOut();
+    setScreen("landing");
+    setTab("home");
+  };
+
+  const saveProfile = async (data) => {
+    const email = session.user.email || "";
+    const phone = session.user.phone || "";
+    await sb.from("profiles").upsert({
+      id: session.user.id,
+      email: email,
+      phone: phone,
+      ...data
+    });
+    setProfile(p=>({...p,...data,email,phone}));
+    setMyViz({visible:data.visible||true, openFor:data.open_for||[], bio:data.bio||""});
+    await loadData(session.user.id);
+  };
+
+  // ── NOT LOGGED IN → Auth screens ──────────────────────
+  if(!session) return <AuthFlow authScreen={authScreen} setAuthScreen={setAuthScreen}/>;
+
+  // ── PROFILE SETUP (first login) ───────────────────────
+  if(profile && (!profile.name || !profile.role)) return <SetupScreen onSave={saveProfile} profile={profile}/>;
+
+  if(loading) return (
+    <div style={{minHeight:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,background:"#0B0F1A"}}>
+      <div style={{width:32,height:32,background:"#3B82F6",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <svg width="18" height="18" fill="white" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      </div>
+      <p style={{color:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:"500"}}>Loading Relay...</p>
+    </div>
+  );
+
+  const inviterName = profile?.name || "Relay User";
+  const inviterRole = profile?.role || "";
+
+  // ── EMAIL HELPER ──────────────────────────────────────
+  const sendEmail = async (to, subject, html) => {
+    try {
+      await fetch("https://jgxhkrfojgykriowxfxy.supabase.co/functions/v1/send-intro-email", {
+        method: "POST",
+        headers: {"Content-Type":"application/json","Authorization":`Bearer ${SUPABASE_KEY}`},
+        body: JSON.stringify({to, subject, html})
+      });
+    } catch(e) { console.error("Email error:", e); }
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:"#060912",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif"}}>
+      <div style={{width:390,height:844,background:"#0B0F1A",borderRadius:48,border:"1px solid rgba(255,255,255,0.06)",overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 60px 200px rgba(0,0,0,0.95), inset 0 1px 0 rgba(255,255,255,0.05)",position:"relative"}}>
+        {/* Status bar */}
+        <div style={{height:48,padding:"0 28px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:"transparent"}}>
+          <span style={{color:"rgba(255,255,255,0.9)",fontSize:14,fontWeight:"600",letterSpacing:"-0.02em"}}>9:41</span>
+          <div style={{width:120,height:20,background:"#0B0F1A",borderRadius:10,border:"1px solid rgba(255,255,255,0.08)"}}/>
+          <div style={{display:"flex",gap:4,alignItems:"center"}}>
+            {[0,1,2].map(i=><span key={i} style={{width:5,height:5,borderRadius:"50%",background:"rgba(255,255,255,0.2)",display:"block"}}/>)}
+          </div>
+        </div>
+
+        {/* Screen content */}
+        <div style={{flex:1,overflowY:"auto",overflowX:"hidden"}}>
+          {screen==="landing" && <LandingScreen go={go}/>}
+          {screen==="home" && <HomeScreen go={go} notifs={notifs} visibleTargets={visibleTargets} connectors={connectors} networkStats={networkStats} profile={profile}/>}
+          {screen==="match" && <MatchScreen targets={visibleTargets} connectors={connectors} onSel={t=>{setSelTarget(t);go("tprofile");}}/>}
+          {screen==="tprofile" && selTarget && <TargetProfile target={selTarget} connectors={connectors} onBack={()=>go("match","match")} onReq={()=>go("request","request")} myNetwork={myNetwork} onMessage={async(target)=>{
+            const {data:p} = await sb.from("profiles").select("id,name").eq("email",target.email||"").single();
+            if(p) { setSelConversation({id:p.id,name:p.name||target.name}); go("messages","messages"); }
+          }} onAddToNetwork={async(target)=>{
+            const {data:existing} = await sb.from("invitations").select("id").eq("inviter_id",session.user.id).eq("contact_email",target.email||"").maybeSingle();
+            if(existing) return;
+            const {data:newInv} = await sb.from("invitations").insert({
+              inviter_id: session.user.id,
+              inviter_name: profile?.name||"",
+              contact_name: target.name,
+              contact_email: target.email||null,
+              contact_phone: target.phone||null,
+              contact_role: target.role||null,
+              contact_sector: target.sector||null,
+              status: "accepted",
+              accepted_at: new Date().toISOString()
+            }).select().single();
+            if(newInv) setMyNetwork(n=>[...n, newInv]);
+          }}/>}
+          {screen==="request" && <RequestScreen form={form} setForm={setForm} connectors={connectors} targets={visibleTargets} onSubmit={async()=>{
+            const {data:reqData} = await sb.from("requests").insert({
+              target_name: form.target,
+              connector_id: form.connector,
+              request_type: form.rtype,
+              message: form.reason,
+              status: "pending",
+              requester_id: session.user.id,
+              requester_name: profile?.name || "",
+              requester_email: session.user.email || ""
+            }).select().single();
+            if(form.connector) {
+              await sb.rpc("increment_times_requested", { connector_id_input: form.connector });
+              // Email au connecteur
+              const connector = connectors.find(c=>c.id===form.connector);
+              if(connector?.email) {
+                await sendEmail(
+                  connector.email,
+                  `New intro request on Relay — ${form.target}`,
+                  `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px;background:#0B0F1A;color:#fff;border-radius:16px;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:24px;">
+                      <div style="width:32px;height:32px;background:#3B82F6;border-radius:8px;"></div>
+                      <span style="font-size:16px;font-weight:700;">RELAY</span>
+                    </div>
+                    <h2 style="font-size:22px;font-weight:800;margin-bottom:8px;">You have a new introduction request</h2>
+                    <p style="color:rgba(255,255,255,.6);margin-bottom:24px;">Someone in your network wants to be introduced to <strong style="color:#fff">${form.target}</strong> through you.</p>
+                    <div style="background:rgba(255,255,255,.06);border-radius:12px;padding:20px;margin-bottom:24px;">
+                      <p style="margin-bottom:8px;"><strong>From:</strong> ${profile?.name || "A Relay member"}</p>
+                      <p style="margin-bottom:8px;"><strong>Target:</strong> ${form.target}</p>
+                      <p style="margin-bottom:8px;"><strong>Type:</strong> ${form.rtype}</p>
+                      <p style="margin-bottom:0;"><strong>Message:</strong> ${form.reason}</p>
+                    </div>
+                    <a href="https://relayintro.com" style="display:inline-block;background:#3B82F6;color:#fff;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:700;">Review on Relay →</a>
+                    <p style="color:rgba(255,255,255,.3);font-size:12px;margin-top:24px;">You can accept or decline this request in your Alerts tab.</p>
+                  </div>`
+                );
+              }
+            }
+            const r = await sb.from("connectors").select("*");
+            if(r.data) setConnectors(r.data.map(c=>({...c,initials:getInitials(c.name),avatar:getInitials(c.name),acc:c.accept_rate,intros:c.intros_count,score:calcRelayScore(c)})).sort((a,b)=>b.score-a.score));
+            go("confirm");
+          }}/>}
+          {screen==="messages" && <MessagesScreen supabase={sb} currentUser={profile} session={session} selConversation={selConversation} setSelConversation={setSelConversation} myNetwork={myNetwork} onUnread={setUnreadMessages}/>}
+          {screen==="confirm" && <ConfirmScreen onDone={()=>go("home","home")}/>}
+          {screen==="notifs" && <NotifsScreen notifs={notifs} onAccept={acceptN} onDecline={declineN}/>}
+          {screen==="network" && <NetworkScreen supabase={sb} inviterName={inviterName} inviterRole={inviterRole} inviterId={session.user.id}/>}
+          {screen==="myprofile" && <MyProfileScreen viz={myViz} go={go} profile={profile} onSignOut={handleSignOut}/>}
+          {screen==="visibility" && <VisibilityScreen viz={myViz} setViz={async(v)=>{ setMyViz(v); await sb.from("profiles").update({visible:v.visible,open_for:v.openFor,bio:v.bio}).eq("id",session.user.id); }} onBack={()=>go("myprofile","myprofile")}/>}
+          {screen==="connectors" && <ConnectorsScreen connectors={connectors} onSel={c=>{setSelConn(c);go("cprofile");}}/>}
+          {screen==="cprofile" && selConn && <ConnectorProfile connector={selConn} onBack={()=>go("connectors")} onReq={()=>go("request","request")}/>}
+        </div>
+
+        {/* Tab bar */}
+        <div style={{height:82,background:"rgba(11,15,26,0.95)",borderTop:"1px solid rgba(255,255,255,0.06)",display:"flex",flexShrink:0,backdropFilter:"blur(20px)"}}>
+          {[
+            {id:"home",label:"Home",icon:<HomeIcon/>,sc:"home"},
+            {id:"match",label:"Discover",icon:<DiscoverIcon/>,sc:"match"},
+            {id:"network",label:"Network",icon:<NetworkIcon/>,sc:"network"},
+            {id:"messages",label:"Messages",icon:<MessageIcon/>,sc:"messages",badge:unreadMessages},
+            {id:"myprofile",label:"Profile",icon:<ProfileIcon/>,sc:"myprofile"},
+          ].map(t=>(
+            <button key={t.id} onClick={()=>{setTab(t.id);go(t.sc,t.id);}} style={{flex:1,background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5,color:tab===t.id?"#3B82F6":"rgba(255,255,255,0.3)",transition:"color 0.2s",position:"relative"}}>
+              <div style={{position:"relative"}}>
+                {t.icon}
+                {t.badge>0&&<span style={{position:"absolute",top:-5,right:-8,background:"#EF4444",color:"#fff",borderRadius:"50%",width:15,height:15,fontSize:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"700"}}>{t.badge}</span>}
+              </div>
+              <span style={{fontSize:9,letterSpacing:"0.04em",fontWeight:"500"}}>{t.label}</span>
+              {tab===t.id&&<div style={{position:"absolute",bottom:0,width:20,height:2,background:"#3B82F6",borderRadius:2}}/>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── MESSAGES ───────────────────────────────────────────────
+function MessagesScreen({supabase, currentUser, session, selConversation, setSelConversation, myNetwork, onUnread}) {
+  const {useState, useEffect, useRef} = React;
+  const [conversations, setConversations] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [newMsg, setNewMsg] = useState("");
+  const [loading, setLoading] = useState(true);
+  const bottomRef = useRef(null);
+
+  useEffect(()=>{ loadConversations(); },[]);
+  useEffect(()=>{ if(selConversation) loadMessages(selConversation.id); },[selConversation]);
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[messages]);
+
+  const loadConversations = async () => {
+    setLoading(true);
+    const uid = session.user.id;
+    const {data} = await supabase.from("messages")
+      .select("*, sender:sender_id(id,name), receiver:receiver_id(id,name)")
+      .or(`sender_id.eq.${uid},receiver_id.eq.${uid}`)
+      .order("created_at", {ascending:false});
+
+    if(data) {
+      // Grouper par conversation
+      const convMap = {};
+      data.forEach(m => {
+        const otherId = m.sender_id === uid ? m.receiver_id : m.sender_id;
+        const otherName = m.sender_id === uid ? m.receiver?.name : m.sender?.name;
+        if(!convMap[otherId]) convMap[otherId] = {id:otherId, name:otherName||"Unknown", lastMsg:m.content, lastTime:m.created_at, unread:0};
+        if(!m.read && m.receiver_id === uid) convMap[otherId].unread++;
+      });
+      const convList = Object.values(convMap);
+      setConversations(convList);
+      onUnread(convList.reduce((acc,c)=>acc+c.unread,0));
+    }
+    setLoading(false);
+  };
+
+  const loadMessages = async (otherId) => {
+    const uid = session.user.id;
+    const {data} = await supabase.from("messages")
+      .select("*")
+      .or(`and(sender_id.eq.${uid},receiver_id.eq.${otherId}),and(sender_id.eq.${otherId},receiver_id.eq.${uid})`)
+      .order("created_at", {ascending:true});
+    if(data) setMessages(data);
+    // Marquer comme lu
+    await supabase.from("messages").update({read:true}).eq("sender_id",otherId).eq("receiver_id",uid).eq("read",false);
+    loadConversations();
+  };
+
+  const sendMessage = async () => {
+    if(!newMsg.trim() || !selConversation) return;
+    const uid = session.user.id;
+    const {data} = await supabase.from("messages").insert({
+      sender_id: uid,
+      receiver_id: selConversation.id,
+      content: newMsg.trim(),
+      read: false
+    }).select().single();
+    if(data) setMessages(m=>[...m, data]);
+    setNewMsg("");
+    loadConversations();
+  };
+
+  // ── Conversation view ────────────────────────────────────
+  if(selConversation) return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      <div style={{padding:"20px 20px 12px",borderBottom:"1px solid rgba(255,255,255,.06)",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={()=>setSelConversation(null)} style={Btn.back}>←</button>
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:"700",color:"#fff"}}>{getInitials(selConversation.name)}</div>
+        <p style={{color:"#fff",fontSize:14,fontWeight:"700"}}>{selConversation.name}</p>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:"16px 16px 8px",display:"flex",flexDirection:"column",gap:8}}>
+        {messages.length === 0 && <p style={{color:"rgba(255,255,255,.2)",fontSize:12,textAlign:"center",marginTop:32}}>No messages yet. Say hello! 👋</p>}
+        {messages.map(m=>{
+          const isMine = m.sender_id === session.user.id;
+          return (
+            <div key={m.id} style={{display:"flex",justifyContent:isMine?"flex-end":"flex-start"}}>
+              <div style={{maxWidth:"75%",background:isMine?"#3B82F6":"rgba(255,255,255,.08)",borderRadius:isMine?"16px 16px 4px 16px":"16px 16px 16px 4px",padding:"10px 14px"}}>
+                <p style={{color:"#fff",fontSize:13,lineHeight:1.5}}>{m.content}</p>
+                <p style={{color:isMine?"rgba(255,255,255,.5)":"rgba(255,255,255,.3)",fontSize:10,marginTop:4,textAlign:"right"}}>{timeAgo(m.created_at)}</p>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={bottomRef}/>
+      </div>
+      <div style={{padding:"12px 16px",borderTop:"1px solid rgba(255,255,255,.06)",display:"flex",gap:8}}>
+        <input
+          style={{...InputStyle,flex:1}}
+          placeholder="Write a message..."
+          value={newMsg}
+          onChange={e=>setNewMsg(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&sendMessage()}
+        />
+        <button onClick={sendMessage} disabled={!newMsg.trim()} style={{background:"#3B82F6",border:"none",borderRadius:12,padding:"0 16px",cursor:"pointer",opacity:!newMsg.trim()?.5:1}}>
+          <svg width="16" height="16" fill="none" stroke="white" strokeWidth="2.5" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── Inbox ────────────────────────────────────────────────
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <h2 style={{...T.pageTitle,marginBottom:6}}>Messages</h2>
+      <p style={{color:"rgba(255,255,255,.35)",fontSize:12,marginBottom:20}}>Private messages with your network.</p>
+
+      {/* New conversation — contacts dans mon Network */}
+      {myNetwork.filter(i=>i.status==="accepted" && i.contact_email).length > 0 && (
+        <div style={{marginBottom:20}}>
+          <p style={{fontSize:10,fontWeight:"700",color:"rgba(255,255,255,.25)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12}}>Start a conversation</p>
+          <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:4}}>
+            {myNetwork.filter(i=>i.status==="accepted").slice(0,8).map(contact=>(
+              <button key={contact.id} onClick={async()=>{
+                // Trouver le profile_id via email
+                const {data:p} = await supabase.from("profiles").select("id,name").eq("email",contact.contact_email||"").single();
+                if(p) setSelConversation({id:p.id, name:p.name||contact.contact_name});
+                else setSelConversation({id:contact.id, name:contact.contact_name});
+              }} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,padding:"12px",display:"flex",flexDirection:"column",alignItems:"center",gap:8,minWidth:70,cursor:"pointer",flexShrink:0}}>
+                <div style={{width:40,height:40,borderRadius:12,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:"700",color:"#fff"}}>{getInitials(contact.contact_name)}</div>
+                <p style={{color:"#fff",fontSize:10,fontWeight:"600",textAlign:"center",whiteSpace:"nowrap"}}>{contact.contact_name.split(" ")[0]}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Conversations list */}
+      {conversations.length === 0 && !loading ? (
+        <div style={{textAlign:"center",padding:"48px 0"}}>
+          <div style={{fontSize:40,marginBottom:12}}>💬</div>
+          <p style={{color:"rgba(255,255,255,.3)",fontSize:14}}>No messages yet.</p>
+          <p style={{color:"rgba(255,255,255,.2)",fontSize:12,marginTop:8}}>Start a conversation with someone in your Network.</p>
+        </div>
+      ) : (
+        <div>
+          <p style={{fontSize:10,fontWeight:"700",color:"rgba(255,255,255,.25)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12}}>Recent conversations</p>
+          {conversations.map(conv=>(
+            <div key={conv.id} onClick={()=>setSelConversation(conv)} style={{...CardStyle,display:"flex",alignItems:"center",gap:12,marginBottom:8,cursor:"pointer"}}>
+              <div style={{width:44,height:44,borderRadius:13,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:"700",color:"#fff",flexShrink:0}}>{getInitials(conv.name)}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <p style={{color:"#fff",fontSize:13,fontWeight:"600",marginBottom:3}}>{conv.name}</p>
+                <p style={{color:"rgba(255,255,255,.35)",fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{conv.lastMsg}</p>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
+                <p style={{color:"rgba(255,255,255,.25)",fontSize:10}}>{timeAgo(conv.lastTime)}</p>
+                {conv.unread > 0 && <div style={{background:"#3B82F6",borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#fff",fontSize:9,fontWeight:"700"}}>{conv.unread}</span></div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── AUTH FLOW ───────────────────────────────────────────────
+function AuthFlow({authScreen, setAuthScreen}) {
+  const {useState} = React;
+  const [email,setEmail] = useState("");
+  const [password,setPassword] = useState("");
+  const [error,setError] = useState("");
+  const [loading,setLoading] = useState(false);
+  const [success,setSuccess] = useState("");
+  const [forgotPwd,setForgotPwd] = useState(false);
+  const IS = {background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"14px 16px",color:"#fff",fontSize:15,fontFamily:"'Inter',sans-serif",width:"100%",boxSizing:"border-box"};
+
+  const handleForgotPwd = async () => {
+    if(!email){setError("Enter your email first.");return;}
+    setLoading(true); setError("");
+    const {error:e} = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin
+    });
+    if(e) setError(e.message);
+    else setSuccess("Reset link sent! Check your email.");
+    setForgotPwd(false);
+    setLoading(false);
+  };
+
+  const handleAuth = async () => {
+    if(!email||!password){setError("Please fill in all fields.");return;}
+    setLoading(true); setError(""); setSuccess("");
+    try {
+      if(authScreen==="login"){
+        const {error:e} = await sb.auth.signInWithPassword({email,password});
+        if(e) throw e;
+      } else {
+        const {error:e} = await sb.auth.signUp({email,password});
+        if(e) throw e;
+        setSuccess("Account created! Check your email to confirm, then sign in.");
+        setAuthScreen("login");
+      }
+    } catch(e){
+      setError(e.message||"Something went wrong.");
+    }
+    setLoading(false);
+  };
+
+  const handleLinkedIn = async () => {
+    setLoading(true); setError("");
+    const {error:e} = await sb.auth.signInWithOAuth({
+      provider: "linkedin_oidc",
+      options: { redirectTo: window.location.origin + "/callback.html" }
+    });
+    if(e) setError(e.message||"LinkedIn login failed.");
+    setLoading(false);
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:"#060912",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif"}}>
+      <div style={{width:390,minHeight:844,background:"#0B0F1A",borderRadius:48,border:"1px solid rgba(255,255,255,0.06)",overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 60px 200px rgba(0,0,0,0.95)",position:"relative",padding:"60px 32px 40px"}}>
+        <div style={{position:"absolute",top:-100,left:-100,width:400,height:400,background:"radial-gradient(circle,rgba(59,130,246,.1),transparent 65%)",pointerEvents:"none"}}/>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:56}}>
+          <div style={{width:32,height:32,background:"#3B82F6",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="18" height="18" fill="white" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          </div>
+          <span style={{color:"#fff",fontSize:16,fontWeight:"700",letterSpacing:"-.02em"}}>RELAY</span>
+        </div>
+        <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",borderRadius:20,padding:"5px 12px",marginBottom:20,alignSelf:"flex-start"}}>
+          <div style={{width:6,height:6,borderRadius:"50%",background:"#3B82F6"}}/>
+          <span style={{color:"#3B82F6",fontSize:11,fontWeight:"700",letterSpacing:".05em",textTransform:"uppercase"}}>By invitation only</span>
+        </div>
+        <h1 style={{color:"#fff",fontSize:32,fontWeight:"900",letterSpacing:"-.03em",marginBottom:8}}>
+          {authScreen==="login"?"Welcome back.":"Create your account."}
+        </h1>
+        <p style={{color:"rgba(255,255,255,.4)",fontSize:14,marginBottom:28,lineHeight:1.6}}>
+          {authScreen==="login"?"Sign in to your Relay account.":"Join the trusted introduction network."}
+        </p>
+
+        {/* LinkedIn button */}
+        <button onClick={handleLinkedIn} disabled={loading} style={{background:"#0A66C2",color:"#fff",border:"none",borderRadius:14,padding:"15px",fontSize:14,fontWeight:"700",cursor:"pointer",width:"100%",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6zM2 9h4v12H2z"/><circle cx="4" cy="4" r="2"/></svg>
+          Continue with LinkedIn
+        </button>
+
+        {/* Divider */}
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+          <div style={{flex:1,height:1,background:"rgba(255,255,255,.08)"}}/>
+          <span style={{color:"rgba(255,255,255,.2)",fontSize:11}}>or</span>
+          <div style={{flex:1,height:1,background:"rgba(255,255,255,.08)"}}/>
+        </div>
+
+        <div style={{display:"flex",flexDirection:"column",gap:14,marginBottom:16}}>
+          <div>
+            <p style={{color:"rgba(255,255,255,.3)",fontSize:10,fontWeight:"700",textTransform:"uppercase",letterSpacing:".1em",marginBottom:8}}>Email</p>
+            <input style={IS} type="email" placeholder="you@company.com" value={email} onChange={e=>setEmail(e.target.value)}/>
+          </div>
+          {!forgotPwd && (
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <p style={{color:"rgba(255,255,255,.3)",fontSize:10,fontWeight:"700",textTransform:"uppercase",letterSpacing:".1em"}}>Password</p>
+                {authScreen==="login" && <button onClick={()=>setForgotPwd(true)} style={{background:"none",border:"none",color:"#3B82F6",fontSize:11,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>Forgot password?</button>}
+              </div>
+              <input style={IS} type="password" placeholder="••••••••" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAuth()}/>
+            </div>
+          )}
+        </div>
+        {error && <div style={{background:"rgba(239,68,68,.12)",border:"1px solid rgba(239,68,68,.25)",borderRadius:10,padding:"10px 14px",marginBottom:14}}><p style={{color:"#F87171",fontSize:12}}>{error}</p></div>}
+        {success && <div style={{background:"rgba(16,185,129,.12)",border:"1px solid rgba(16,185,129,.25)",borderRadius:10,padding:"10px 14px",marginBottom:14}}><p style={{color:"#10B981",fontSize:12}}>{success}</p></div>}
+        {forgotPwd ? (
+          <>
+            <button onClick={handleForgotPwd} disabled={loading} style={{background:"#3B82F6",color:"#fff",border:"none",borderRadius:14,padding:"16px",fontSize:15,fontWeight:"700",cursor:"pointer",width:"100%",marginBottom:12,opacity:loading?.6:1}}>
+              {loading?"Sending...":"Send reset link →"}
+            </button>
+            <button onClick={()=>{setForgotPwd(false);setError("");}} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",fontSize:13,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>← Back to sign in</button>
+          </>
+        ) : (
+          <>
+            <button onClick={handleAuth} disabled={loading} style={{background:"#3B82F6",color:"#fff",border:"none",borderRadius:14,padding:"16px",fontSize:15,fontWeight:"700",cursor:"pointer",width:"100%",marginBottom:12,opacity:loading?.6:1,boxShadow:"0 0 40px rgba(59,130,246,.3)"}}>
+              {loading?"Loading...":(authScreen==="login"?"Sign in →":"Create account →")}
+            </button>
+            <button onClick={()=>{setAuthScreen(authScreen==="login"?"signup":"login");setError("");setSuccess("");}} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",fontSize:13,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>
+              {authScreen==="login"?"No account? Sign up":"Already have an account? Sign in"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── PROFILE SETUP (first login) ─────────────────────────────
+function SetupScreen({onSave, profile}) {
+  const {useState} = React;
+  const [name,setName] = useState(profile?.name||"");
+  const [role,setRole] = useState(profile?.role||"");
+  const [sector,setSector] = useState(profile?.sector||"");
+  const [bio,setBio] = useState(profile?.bio||"");
+  const [phone,setPhone] = useState(profile?.phone||"");
+  const [loading,setLoading] = useState(false);
+  const IS = {background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"14px 16px",color:"#fff",fontSize:14,fontFamily:"'Inter',sans-serif",width:"100%",boxSizing:"border-box"};
+  const hasLinkedIn = !!profile?.linkedin_avatar;
+
+  const handleSave = async () => {
+    if(!name||!role){return;}
+    setLoading(true);
+    await onSave({name,role,sector,bio,phone,visible:true,open_for:["Partnership","Advisory"]});
+    setLoading(false);
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:"#060912",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif"}}>
+      <div style={{width:390,minHeight:844,background:"#0B0F1A",borderRadius:48,border:"1px solid rgba(255,255,255,0.06)",overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 60px 200px rgba(0,0,0,0.95)",padding:"60px 32px 40px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:48}}>
+          <div style={{width:32,height:32,background:"#3B82F6",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="18" height="18" fill="white" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          </div>
+          <span style={{color:"#fff",fontSize:16,fontWeight:"700",letterSpacing:"-.02em"}}>RELAY</span>
+        </div>
+        <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",borderRadius:20,padding:"5px 12px",marginBottom:16}}>
+          <div style={{width:6,height:6,borderRadius:"50%",background:"#3B82F6"}}/>
+          <span style={{color:"#3B82F6",fontSize:11,fontWeight:"700",letterSpacing:".05em",textTransform:"uppercase"}}>Setup your profile</span>
+        </div>
+        <h1 style={{color:"#fff",fontSize:28,fontWeight:"900",letterSpacing:"-.03em",marginBottom:8}}>Tell us about yourself.</h1>
+        {hasLinkedIn
+          ? <div style={{background:"rgba(10,102,194,.12)",border:"1px solid rgba(10,102,194,.25)",borderRadius:10,padding:"10px 14px",marginBottom:20,display:"flex",alignItems:"center",gap:8}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="#0A66C2"><path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6zM2 9h4v12H2z"/><circle cx="4" cy="4" r="2"/></svg>
+              <p style={{color:"#60A5FA",fontSize:12}}>Your name was imported from LinkedIn. Complete your role and sector.</p>
+            </div>
+          : <p style={{color:"rgba(255,255,255,.4)",fontSize:14,marginBottom:24,lineHeight:1.6}}>This is how others will see you on Relay.</p>
+        }
+        <div style={{display:"flex",flexDirection:"column",gap:14,marginBottom:24}}>
+          {[
+            ["Full name *","Your name","text",name,setName],
+            ["Role / Title *","CEO, VP Sales...","text",role,setRole],
+            ["Sector","Tech, Finance, VC...","text",sector,setSector],
+            ["Phone","+ 212 6 00 00 00 00","tel",phone,setPhone],
+            ["Bio","Short description...","text",bio,setBio]
+          ].map(([lbl,ph,tp,val,set])=>(
+            <div key={lbl}>
+              <p style={{color:"rgba(255,255,255,.3)",fontSize:10,fontWeight:"700",textTransform:"uppercase",letterSpacing:".1em",marginBottom:8}}>{lbl}</p>
+              <input style={IS} type={tp} placeholder={ph} value={val} onChange={e=>set(e.target.value)}/>
+            </div>
+          ))}
+        </div>
+        <button onClick={handleSave} disabled={!name||!role||loading} style={{background:"#3B82F6",color:"#fff",border:"none",borderRadius:14,padding:"16px",fontSize:15,fontWeight:"700",cursor:"pointer",width:"100%",opacity:(!name||!role||loading)?.5:1}}>
+          {loading?"Saving...":"Enter Relay →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── ICONS ──────────────────────────────────────────────────
+const HomeIcon=()=><svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>;
+const DiscoverIcon=()=><svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
+const AlertIcon=()=><svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>;
+const MessageIcon=()=><svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>;
+const NetworkIcon=()=><svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 014-4h4a4 4 0 014 4v2"/><path d="M16 3.13a4 4 0 010 7.75"/><path d="M21 21v-2a4 4 0 00-3-3.85"/></svg>;
+const ProfileIcon=()=><svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
+const ChevronRight=()=><svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>;
+const CheckIcon=()=><svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>;
+
+// ── LANDING ────────────────────────────────────────────────
+function LandingScreen({go}) {
+  return (
+    <div style={{minHeight:"100%",background:"linear-gradient(180deg,#0B0F1A 0%,#0D1428 50%,#0B0F1A 100%)",position:"relative",overflow:"hidden"}}>
+      {/* BG glow */}
+      <div style={{position:"absolute",top:-100,left:-100,width:400,height:400,background:"radial-gradient(circle,rgba(59,130,246,0.12) 0%,transparent 70%)",pointerEvents:"none"}}/>
+      <div style={{position:"absolute",bottom:-50,right:-80,width:300,height:300,background:"radial-gradient(circle,rgba(99,102,241,0.08) 0%,transparent 70%)",pointerEvents:"none"}}/>
+
+      <div style={{padding:"60px 28px 40px",position:"relative"}}>
+        {/* Logo */}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:64}}>
+          <div style={{width:28,height:28,background:"#3B82F6",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="16" height="16" fill="white" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          </div>
+          <span style={{color:"#fff",fontSize:16,fontWeight:"700",letterSpacing:"-0.02em"}}>RELAY</span>
+          <span style={{marginLeft:"auto",color:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:"500",border:"1px solid rgba(255,255,255,0.1)",borderRadius:20,padding:"4px 10px"}}>Sign In</span>
+        </div>
+
+        {/* Badge */}
+        <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"rgba(59,130,246,0.12)",border:"1px solid rgba(59,130,246,0.25)",borderRadius:20,padding:"5px 12px",marginBottom:24}}>
+          <div style={{width:6,height:6,borderRadius:"50%",background:"#3B82F6"}}/>
+          <span style={{color:"#3B82F6",fontSize:11,fontWeight:"600",letterSpacing:"0.05em",textTransform:"uppercase"}}>By invitation only</span>
+        </div>
+
+        {/* Hero */}
+        <h1 style={{color:"#fff",fontSize:40,fontWeight:"800",lineHeight:1.1,letterSpacing:"-0.03em",marginBottom:20}}>
+          Unlock the right<br/><span style={{color:"#3B82F6"}}>introduction.</span>
+        </h1>
+        <p style={{color:"rgba(255,255,255,0.5)",fontSize:15,lineHeight:1.7,marginBottom:40}}>
+          Relay enables you to reach decision-makers through trusted intermediaries — not cold outreach. Secure, private, and institutional.
+        </p>
+
+        {/* Stats */}
+        <div style={{display:"flex",gap:12,marginBottom:40}}>
+          {[{val:"2.4k",label:"Connectors"},{val:"94%",label:"Accept rate"},{val:"48h",label:"Avg. delivery"}].map(st=>(
+            <div key={st.label} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:14,padding:"14px 10px",textAlign:"center"}}>
+              <p style={{color:"#fff",fontSize:20,fontWeight:"700",letterSpacing:"-0.03em"}}>{st.val}</p>
+              <p style={{color:"rgba(255,255,255,0.35)",fontSize:10,marginTop:4,textTransform:"uppercase",letterSpacing:"0.06em"}}>{st.label}</p>
+            </div>
+          ))}
+        </div>
+
+        <button className="glow" onClick={()=>go("home","home")} style={{width:"100%",background:"#3B82F6",color:"#fff",border:"none",borderRadius:14,padding:"16px",fontSize:15,fontWeight:"700",cursor:"pointer",letterSpacing:"-0.01em",marginBottom:12}}>
+          Request an Introduction →
+        </button>
+        <button onClick={()=>go("match","match")} style={{width:"100%",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.6)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:14,padding:"16px",fontSize:15,fontWeight:"500",cursor:"pointer"}}>
+          Learn More
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── HOME ───────────────────────────────────────────────────
+function HomeScreen({go,notifs,visibleTargets,connectors,networkStats,profile}) {
+  const unread=notifs.filter(n=>!n.read).length;
+  const firstName = profile?.name?.split(" ")[0] || "there";
+  const hour = new Date().getHours();
+  const greeting = hour<12?"Good morning":hour<18?"Good afternoon":"Good evening";
+  const initials = profile?.name ? getInitials(profile.name) : "?";
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:28}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:24,height:24,background:"#3B82F6",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="13" height="13" fill="white" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          </div>
+          <span style={{color:"#fff",fontSize:15,fontWeight:"700",letterSpacing:"-0.02em"}}>RELAY</span>
+        </div>
+        <button onClick={()=>go("myprofile","myprofile")} style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,#3B82F6,#6366F1)",border:"none",cursor:"pointer",color:"#fff",fontSize:13,fontWeight:"700"}}>{initials}</button>
+      </div>
+      <div style={{marginBottom:24}}>
+        <p style={{color:"rgba(255,255,255,0.4)",fontSize:12,marginBottom:4,fontWeight:"500"}}>{greeting},</p>
+        <h2 style={{color:"#fff",fontSize:26,fontWeight:"800",letterSpacing:"-0.03em"}}>{firstName} 👋</h2>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:24}}>
+        {[
+          {label:"Targets",val:visibleTargets.length,color:"#3B82F6"},
+          {label:"Alerts",val:unread,color:unread>0?"#EF4444":"rgba(255,255,255,0.2)"},
+          {label:"Joined",val:networkStats.joined,color:"#10B981"},
+        ].map(st=>(
+          <div key={st.label} style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:16,padding:"16px 12px",textAlign:"center"}}>
+            <p style={{color:st.color,fontSize:24,fontWeight:"800",letterSpacing:"-0.03em"}}>{st.val}</p>
+            <p style={{color:"rgba(255,255,255,0.3)",fontSize:9,marginTop:4,textTransform:"uppercase",letterSpacing:"0.06em",lineHeight:1.3}}>{st.label}</p>
+          </div>
+        ))}
+      </div>
+      <div style={{background:"linear-gradient(135deg,rgba(59,130,246,0.15),rgba(99,102,241,0.1))",border:"1px solid rgba(59,130,246,0.2)",borderRadius:18,padding:20,marginBottom:16}}>
+        <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"rgba(59,130,246,0.15)",borderRadius:20,padding:"4px 10px",marginBottom:12}}>
+          <div style={{width:5,height:5,borderRadius:"50%",background:"#3B82F6"}}/>
+          <span style={{color:"#3B82F6",fontSize:10,fontWeight:"600",letterSpacing:"0.06em",textTransform:"uppercase"}}>Trusted access</span>
+        </div>
+        <p style={{color:"rgba(255,255,255,0.7)",fontSize:13,lineHeight:1.7,marginBottom:16}}>Targets have chosen to be reachable. Request a warm introduction through a trusted connector.</p>
+        <div style={{display:"flex",gap:8}}>
+          <button style={Btn.primary} onClick={()=>go("match","match")}>Discover targets →</button>
+          <button style={Btn.ghost} onClick={()=>go("network","network")}>Invite contacts</button>
+        </div>
+      </div>
+      <div style={{...CardStyle,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <p style={{color:"#fff",fontSize:13,fontWeight:"600"}}>Network growth</p>
+          <span style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{networkStats.invited} invited</span>
+        </div>
+        <div style={{background:"rgba(255,255,255,.06)",borderRadius:4,height:6,marginBottom:8}}>
+          <div style={{height:6,borderRadius:4,background:"linear-gradient(90deg,#3B82F6,#10B981)",width:networkStats.invited>0?Math.round((networkStats.joined/networkStats.invited)*100)+"%":"0%",transition:"width 1s ease"}}/>
+        </div>
+        <p style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{networkStats.joined} joined · {networkStats.invited>0?Math.round((networkStats.joined/networkStats.invited)*100):0}% conversion</p>
+      </div>
+      {unread>0&&(
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <span style={{color:"#fff",fontSize:14,fontWeight:"600"}}>Recent alerts</span>
+            <button style={{color:"#3B82F6",fontSize:11,background:"none",border:"none",cursor:"pointer",fontWeight:"500"}} onClick={()=>go("notifs","notifs")}>View all</button>
+          </div>
+          {notifs.filter(n=>!n.read).slice(0,2).map(n=>(
+            <div key={n.id} style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderLeft:"3px solid #3B82F6",borderRadius:12,padding:"12px 14px",marginBottom:8,display:"flex",gap:10,alignItems:"center"}}>
+              <div style={{width:7,height:7,borderRadius:"50%",background:"#3B82F6",flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <p style={{color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:"500"}}>{n.from} requests an intro · {n.rtype}</p>
+                <p style={{color:"rgba(255,255,255,0.25)",fontSize:10,marginTop:2}}>{n.time} ago</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── MATCH / DISCOVER ───────────────────────────────────────
+function MatchScreen({targets,connectors,onSel}) {
+  const [filter,setFilter]=useState("All");
+  const [search,setSearch]=useState("");
+  const allTypes=["All",...Array.from(new Set(targets.flatMap(t=>t.openFor||[])))].filter(Boolean);
+  const searched = search.trim()
+    ? targets.filter(t=>
+        t.name?.toLowerCase().includes(search.toLowerCase()) ||
+        t.role?.toLowerCase().includes(search.toLowerCase()) ||
+        t.sector?.toLowerCase().includes(search.toLowerCase())
+      )
+    : targets;
+  const filtered=filter==="All"?searched:searched.filter(t=>(t.openFor||[]).includes(filter));
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <h2 style={T.pageTitle}>Discover</h2>
+      <p style={{color:"rgba(255,255,255,0.35)",fontSize:12,marginBottom:14}}>People who chose to be reachable via introduction.</p>
+      {/* Search */}
+      <div style={{position:"relative",marginBottom:14}}>
+        <svg style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",opacity:.4}} width="14" height="14" fill="none" stroke="white" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input
+          style={{...InputStyle,paddingLeft:34}}
+          placeholder="Search by name, role, sector..."
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+        />
+      </div>
+      {allTypes.length > 1 && (
+        <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4,marginBottom:20}}>
+          {allTypes.map(type=>(
+            <button key={type} onClick={()=>setFilter(type)} style={{
+              background:filter===type?"#3B82F6":"rgba(255,255,255,0.05)",
+              color:filter===type?"#fff":"rgba(255,255,255,0.4)",
+              border:filter===type?"none":"1px solid rgba(255,255,255,0.07)",
+              borderRadius:20,padding:"6px 14px",fontSize:11,fontWeight:"600",whiteSpace:"nowrap",cursor:"pointer",flexShrink:0
+            }}>{type}</button>
+          ))}
+        </div>
+      )}
+      {filtered.length === 0 && (
+        <div style={{textAlign:"center",padding:"48px 0"}}>
+          <div style={{fontSize:40,marginBottom:12}}>🔍</div>
+          <p style={{color:"rgba(255,255,255,.3)",fontSize:14}}>No one available yet.</p>
+          <p style={{color:"rgba(255,255,255,.2)",fontSize:12,marginTop:8}}>Invite contacts to grow your network.</p>
+        </div>
+      )}
+      {filtered.map(target=>{
+        const tc=connectors.filter(c=>target.via&&target.via.includes(c.id));
+        return (
+          <button key={target.id} onClick={()=>onSel(target)} style={{width:"100%",textAlign:"left",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:18,padding:16,marginBottom:10,cursor:"pointer",display:"block"}}>
+            <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+              <div style={{width:46,height:46,borderRadius:14,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:"700",color:"#fff",flexShrink:0}}>{target.avatar}</div>
+              <div style={{flex:1}}>
+                <p style={{color:"#fff",fontSize:15,fontWeight:"700",letterSpacing:"-0.02em",marginBottom:2}}>{target.name}</p>
+                <p style={{color:"rgba(255,255,255,0.4)",fontSize:11,marginBottom:target.openFor?.length>0?10:4}}>{target.role}{target.sector?" · "+target.sector:""}</p>
+                {target.openFor?.length > 0 && (
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+                    {target.openFor.map(type=>(
+                      <span key={type} style={{background:"rgba(59,130,246,0.15)",color:"#60A5FA",fontSize:10,padding:"3px 9px",borderRadius:20,fontWeight:"600"}}>{type}</span>
+                    ))}
+                  </div>
+                )}
+                {tc.length > 0 && (
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{color:"rgba(255,255,255,0.25)",fontSize:10,fontWeight:"500"}}>Via</span>
+                    {tc.map(c=>(
+                      <div key={c.id} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(255,255,255,0.06)",borderRadius:20,padding:"2px 8px"}}>
+                        <div style={{width:14,height:14,borderRadius:"50%",background:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,fontWeight:"700",color:"#fff"}}>{c.initials[0]}</div>
+                        <span style={{color:"rgba(255,255,255,0.5)",fontSize:10,fontWeight:"500"}}>{c.name.split(" ")[0]}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{color:"rgba(255,255,255,0.2)",marginTop:2}}><ChevronRight/></div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── TARGET PROFILE ─────────────────────────────────────────
+function TargetProfile({target,connectors,onBack,onReq,onAddToNetwork,myNetwork,onMessage}) {
+  const {useState} = React;
+  const [added, setAdded] = useState(false);
+  const tc=connectors.filter(c=>target.via&&target.via.includes(c.id));
+
+  // Vérifier si déjà dans mon Network
+  const isInNetwork = added || (myNetwork||[]).some(i=>
+    (i.contact_email && i.contact_email === target.email) ||
+    (i.contact_name && i.contact_name === target.name)
+  );
+
+  const handleAdd = async () => {
+    await onAddToNetwork(target);
+    setAdded(true);
+  };
+
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <button style={Btn.back} onClick={onBack}>← Back</button>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{width:80,height:80,borderRadius:24,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:"700",color:"#fff",margin:"0 auto 16px"}}>{target.avatar}</div>
+        <h2 style={{color:"#fff",fontSize:22,fontWeight:"800",letterSpacing:"-0.03em",marginBottom:4}}>{target.name}</h2>
+        <p style={{color:"rgba(255,255,255,0.45)",fontSize:13}}>{target.role}{target.sector?" · "+target.sector:""}</p>
+        {isInNetwork && (
+          <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"rgba(16,185,129,.12)",border:"1px solid rgba(16,185,129,.25)",borderRadius:20,padding:"4px 12px",marginTop:8}}>
+            <div style={{width:6,height:6,borderRadius:"50%",background:"#10B981"}}/>
+            <span style={{color:"#10B981",fontSize:11,fontWeight:"600"}}>In your Network</span>
+          </div>
+        )}
+      </div>
+      <Card style={{marginBottom:12}}>
+        <Label>About</Label>
+        <p style={{color:"rgba(255,255,255,0.65)",fontSize:13,lineHeight:1.7,marginTop:8}}>{target.bio||"No bio yet."}</p>
+      </Card>
+      {target.openFor?.length > 0 && (
+        <Card style={{marginBottom:12}}>
+          <Label>Open for</Label>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+            {target.openFor.map(type=><span key={type} style={{background:"rgba(59,130,246,0.15)",color:"#60A5FA",fontSize:11,padding:"5px 13px",borderRadius:20,fontWeight:"600"}}>{type}</span>)}
+          </div>
+        </Card>
+      )}
+      {tc.length > 0 && !isInNetwork && (
+        <Card style={{marginBottom:24}}>
+          <Label>Reachable via</Label>
+          {tc.map(c=>(
+            <div key={c.id} style={{display:"flex",alignItems:"center",gap:12,marginTop:14}}>
+              <div style={{width:38,height:38,borderRadius:12,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:"700",color:"#fff"}}>{c.initials}</div>
+              <div style={{flex:1}}>
+                <p style={{color:"#fff",fontSize:13,fontWeight:"600"}}>{c.name}</p>
+                <p style={{color:"rgba(255,255,255,0.35)",fontSize:10}}>{c.role}</p>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <p style={{color:"#3B82F6",fontSize:15,fontWeight:"800"}}>{c.score}</p>
+                <p style={{color:"rgba(255,255,255,0.25)",fontSize:9,textTransform:"uppercase",letterSpacing:"0.06em"}}>Score</p>
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {isInNetwork ? (
+        // Déjà dans le Network → contact direct
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {target.email && (
+            <a href={`mailto:${target.email}`} style={{...Btn.primary,textDecoration:"none",textAlign:"center",display:"block"}}>
+              ✉️ Send email
+            </a>
+          )}
+          {target.phone && (
+            <a href={`https://wa.me/${(target.phone||"").replace(/\D/g,"")}`} target="_blank" rel="noreferrer" style={{...Btn.primary,textDecoration:"none",textAlign:"center",display:"block",background:"#25D366"}}>
+              💬 WhatsApp
+            </a>
+          )}
+          <button style={{...Btn.primary,background:"#6366F1"}} onClick={()=>onMessage&&onMessage(target)}>
+            ✉ Message on Relay
+          </button>
+          <div style={{...Btn.ghost,textAlign:"center",color:"#10B981",borderColor:"rgba(16,185,129,.3)",background:"rgba(16,185,129,.08)"}}>✓ In your Network</div>
+        </div>
+      ) : (
+        // Pas dans le Network → demander intro ou ajouter
+        <>
+          <button style={Btn.primary} onClick={onReq}>Request introduction →</button>
+          <button style={{...Btn.ghost,marginTop:10}} onClick={handleAdd}>+ Add to my Network</button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── REQUEST ────────────────────────────────────────────────
+function RequestScreen({form,setForm,connectors,targets,onSubmit}) {
+  const [step,setStep]=useState(1);
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+        <h2 style={T.pageTitle}>New Request</h2>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          {[1,2,3].map(i=><div key={i} style={{width:i<=step?24:8,height:8,borderRadius:4,background:i<=step?"#3B82F6":"rgba(255,255,255,0.1)",transition:"all 0.3s"}}/>)}
+        </div>
+      </div>
+      {step===1&&(
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <p style={T.label}>01 / Target entity</p>
+          <p style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginTop:-8}}>Who are you trying to reach?</p>
+          {targets.map(t=>(
+            <button key={t.id} onClick={()=>setForm({...form,target:t.name})} style={{...CardStyle,border:form.target===t.name?"1px solid #3B82F6":"1px solid rgba(255,255,255,0.07)",display:"flex",alignItems:"center",gap:12,textAlign:"left"}}>
+              <div style={{width:38,height:38,borderRadius:12,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:"700",color:"#fff"}}>{t.avatar}</div>
+              <div style={{flex:1}}>
+                <p style={{color:"#fff",fontSize:13,fontWeight:"600"}}>{t.name}</p>
+                <p style={{color:"rgba(255,255,255,0.35)",fontSize:10}}>{t.role}</p>
+              </div>
+              {form.target===t.name&&<div style={{width:20,height:20,borderRadius:"50%",background:"#3B82F6",display:"flex",alignItems:"center",justifyContent:"center"}}><CheckIcon/></div>}
+            </button>
+          ))}
+          <input style={InputStyle} placeholder="Eg. Sarah Chen, CTO at Cascade" value={form.target} onChange={e=>setForm({...form,target:e.target.value})}/>
+          <p style={T.label}>02 / Basis of request</p>
+          <p style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginTop:-8}}>What is the context for this introduction?</p>
+          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+            {REQ_TYPES.map(type=>(
+              <button key={type} onClick={()=>setForm({...form,rtype:type})} style={{background:form.rtype===type?"#3B82F6":"rgba(255,255,255,0.05)",color:form.rtype===type?"#fff":"rgba(255,255,255,0.45)",border:form.rtype===type?"none":"1px solid rgba(255,255,255,0.08)",borderRadius:20,padding:"7px 14px",fontSize:11,fontWeight:"600",cursor:"pointer"}}>{type}</button>
+            ))}
+          </div>
+          <button style={Btn.primary} onClick={()=>setStep(2)}>Continue →</button>
+        </div>
+      )}
+      {step===2&&(
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <p style={T.label}>03 / Value proposition</p>
+          <p style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginTop:-8}}>Why should they meet you?</p>
+          <textarea style={{...InputStyle,height:110,resize:"none"}} placeholder="Describe the mutual benefit or specific problem you're solving..." value={form.reason} onChange={e=>setForm({...form,reason:e.target.value})}/>
+          <p style={T.label}>04 / Green link</p>
+          <p style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginTop:-8}}>Your LinkedIn URL</p>
+          <input style={InputStyle} placeholder="linkedin.com/in/yourname"/>
+          <button style={Btn.primary} onClick={()=>setStep(3)}>Continue →</button>
+        </div>
+      )}
+      {step===3&&(
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <p style={T.label}>05 / Select connector</p>
+          {connectors.map(c=>(
+            <button key={c.id} style={{...CardStyle,border:form.connector===c.id?"1px solid #3B82F6":"1px solid rgba(255,255,255,0.07)",display:"flex",alignItems:"center",gap:12,textAlign:"left"}} onClick={()=>setForm({...form,connector:c.id})}>
+              <div style={{width:40,height:40,borderRadius:13,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:"700",color:"#fff"}}>{c.initials}</div>
+              <div style={{flex:1}}>
+                <p style={{color:"#fff",fontSize:13,fontWeight:"600"}}>{c.name}</p>
+                <p style={{color:"rgba(255,255,255,0.35)",fontSize:10}}>{c.role}</p>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <p style={{color:"#3B82F6",fontSize:18,fontWeight:"800"}}>{c.score}</p>
+                <p style={{color:"rgba(255,255,255,0.25)",fontSize:9,textTransform:"uppercase"}}>relay score</p>
+              </div>
+            </button>
+          ))}
+          <p style={T.label}>06 / Discretion priority</p>
+          <div style={{display:"flex",gap:8}}>
+            {["Normal","Priority"].map(d=><button key={d} style={{flex:1,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,padding:"10px",color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:"600",cursor:"pointer"}}>{d}</button>)}
+          </div>
+          <p style={{color:"rgba(255,255,255,0.25)",fontSize:11,textAlign:"center",lineHeight:1.6}}>Priority mandates are processed within 24h without additional context shared.</p>
+          <button style={Btn.primary} onClick={onSubmit}>Issue Mandate →</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CONNECTORS ─────────────────────────────────────────────
+function ConnectorsScreen({connectors,onSel}) {
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <div style={{display:"flex",gap:8,marginBottom:20}}>
+        {["PENDING REQUESTS","PROCESSED","STORE"].map((t,i)=>(
+          <button key={t} style={{flex:1,background:i===0?"rgba(59,130,246,0.15)":"rgba(255,255,255,0.04)",border:i===0?"1px solid rgba(59,130,246,0.3)":"1px solid rgba(255,255,255,0.07)",borderRadius:10,padding:"8px 4px",color:i===0?"#3B82F6":"rgba(255,255,255,0.3)",fontSize:9,fontWeight:"700",cursor:"pointer",letterSpacing:"0.04em"}}>{t}</button>
+        ))}
+      </div>
+      <h2 style={{...T.pageTitle,marginBottom:16}}>Connectors</h2>
+      {connectors.map(c=>(
+        <button key={c.id} onClick={()=>onSel(c)} style={{width:"100%",textAlign:"left",...CardStyle,display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+          <div style={{width:46,height:46,borderRadius:14,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:"700",color:"#fff"}}>{c.initials}</div>
+          <div style={{flex:1}}>
+            <p style={{color:"#fff",fontSize:14,fontWeight:"700",marginBottom:2}}>{c.name}</p>
+            <p style={{color:"rgba(255,255,255,0.35)",fontSize:11}}>{c.role}</p>
+            <div style={{display:"flex",gap:4,marginTop:6,alignItems:"center"}}>
+              <div style={{width:6,height:6,borderRadius:"50%",background:"#10B981"}}/>
+              <span style={{color:"#10B981",fontSize:10,fontWeight:"600"}}>AVAILABLE</span>
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <p style={{color:"#3B82F6",fontSize:22,fontWeight:"800",letterSpacing:"-0.03em"}}>{c.score}</p>
+            <p style={{color:"rgba(255,255,255,0.2)",fontSize:9,textTransform:"uppercase",letterSpacing:"0.06em"}}>Score</p>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── CONNECTOR PROFILE ──────────────────────────────────────
+function ConnectorProfile({connector,onBack,onReq}) {
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <button style={Btn.back} onClick={onBack}>← Back</button>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{width:80,height:80,borderRadius:24,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:"700",color:"#fff",margin:"0 auto 16px"}}>{connector.initials}</div>
+        <h2 style={{color:"#fff",fontSize:22,fontWeight:"800",letterSpacing:"-0.03em",marginBottom:4}}>{connector.name}</h2>
+        <p style={{color:"rgba(255,255,255,0.45)",fontSize:13}}>{connector.role}</p>
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:20}}>
+        {[{label:"Relay Score",val:connector.score,color:"#3B82F6"},{label:"Introductions",val:connector.intros,color:"#fff"},{label:"Accept Rate",val:connector.acc,color:"#10B981"}].map(st=>(
+          <div key={st.label} style={{flex:1,...CardStyle,textAlign:"center"}}>
+            <p style={{color:st.color,fontSize:20,fontWeight:"800",letterSpacing:"-0.02em"}}>{st.val}</p>
+            <p style={{color:"rgba(255,255,255,0.25)",fontSize:9,textTransform:"uppercase",letterSpacing:"0.06em",marginTop:4,lineHeight:1.3}}>{st.label}</p>
+          </div>
+        ))}
+      </div>
+      <Card style={{marginBottom:16}}>
+        <Label>Domain of influence</Label>
+        <p style={{color:"rgba(255,255,255,0.6)",fontSize:13,lineHeight:1.7,marginTop:8}}>{connector.domain} · Early-stage · Series A/B · Strategic Hiring</p>
+      </Card>
+      <button style={Btn.primary} onClick={onReq}>Request intro via {connector.name.split(" ")[0]}</button>
+    </div>
+  );
+}
+
+// ── NOTIFICATIONS ──────────────────────────────────────────
+function NotifsScreen({notifs,onAccept,onDecline}) {
+  const [filter,setFilter]=useState("all");
+  const filtered=filter==="req"?notifs.filter(n=>n.type==="req"):notifs;
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <h2 style={{...T.pageTitle,marginBottom:16}}>Alerts</h2>
+      <div style={{display:"flex",gap:8,marginBottom:20}}>
+        {[{id:"all",label:"All"},{id:"req",label:"Intro Requests"}].map(t=>(
+          <button key={t.id} onClick={()=>setFilter(t.id)} style={{background:filter===t.id?"#3B82F6":"rgba(255,255,255,0.05)",color:filter===t.id?"#fff":"rgba(255,255,255,0.4)",border:filter===t.id?"none":"1px solid rgba(255,255,255,0.07)",borderRadius:20,padding:"6px 14px",fontSize:11,fontWeight:"600",cursor:"pointer"}}>{t.label}</button>
+        ))}
+      </div>
+      {filtered.map(n=>(
+        <div key={n.id} style={{...CardStyle,marginBottom:10,borderLeft:`3px solid ${n.read?"rgba(255,255,255,0.07)":"#3B82F6"}`}}>
+          {n.type==="req"?(
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                <p style={{color:"#fff",fontSize:13,fontWeight:"600"}}><span style={{color:"#60A5FA"}}>{n.from}</span> requests an intro</p>
+                <span style={{color:"rgba(255,255,255,0.25)",fontSize:10}}>{n.time} ago</span>
+              </div>
+              <p style={{color:"rgba(255,255,255,0.4)",fontSize:11,marginBottom:4}}>Via <span style={{color:"rgba(255,255,255,0.65)"}}>{n.via}</span></p>
+              <p style={{color:"rgba(255,255,255,0.4)",fontSize:11,marginBottom:12}}>Context: <span style={{color:"rgba(255,255,255,0.65)"}}>{n.context}</span></p>
+              <span style={{background:"rgba(59,130,246,0.15)",color:"#60A5FA",fontSize:10,padding:"3px 10px",borderRadius:20,fontWeight:"600"}}>{n.rtype}</span>
+              {!n.accepted?(
+                <div style={{display:"flex",gap:8,marginTop:12}}>
+                  <button style={{...Btn.primary,flex:1,padding:"10px",fontSize:12}} onClick={()=>onAccept(n.id)}>Accept & Forward</button>
+                  <button style={{...Btn.ghost,flex:1,padding:"10px",fontSize:12}} onClick={()=>onDecline(n.id)}>Clarify</button>
+                </div>
+              ):<p style={{color:"#10B981",fontSize:11,marginTop:10,fontWeight:"600"}}>✓ Introduction forwarded</p>}
+            </div>
+          ):(
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <p style={{color:"#fff",fontSize:13,fontWeight:"600",marginBottom:4}}>Intro to <span style={{color:"#60A5FA"}}>{n.target}</span> accepted</p>
+                <p style={{color:"rgba(255,255,255,0.35)",fontSize:11}}>Via {n.via} · {n.time} ago</p>
+              </div>
+              <div style={{width:28,height:28,borderRadius:"50%",background:"rgba(16,185,129,0.15)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <span style={{color:"#10B981",fontSize:12}}>✓</span>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── MY PROFILE ─────────────────────────────────────────────
+function MyProfileScreen({viz, go, profile, onSignOut}) {
+  const {useState} = React;
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(profile?.name||"");
+  const [role, setRole] = useState(profile?.role||"");
+  const [sector, setSector] = useState(profile?.sector||"");
+  const [bio, setBio] = useState(viz.bio||"");
+  const [saving, setSaving] = useState(false);
+  const initials = name ? getInitials(name) : "?";
+  const IS = {background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:13,fontFamily:"'Inter',sans-serif",width:"100%",boxSizing:"border-box"};
+
+  const saveEdits = async () => {
+    setSaving(true);
+    await sb.from("profiles").update({name,role,sector,bio}).eq("id", profile.id);
+    profile.name = name; profile.role = role; profile.sector = sector;
+    setSaving(false); setEditing(false);
+  };
+
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <h2 style={T.pageTitle}>My Profile</h2>
+        <button onClick={()=>setEditing(!editing)} style={{background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",borderRadius:10,padding:"6px 12px",color:"#3B82F6",fontSize:12,fontWeight:"600",cursor:"pointer"}}>{editing?"Cancel":"Edit"}</button>
+      </div>
+
+      {editing ? (
+        <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:16}}>
+          {[["Full name",name,setName],["Role / Title",role,setRole],["Sector",sector,setSector]].map(([lbl,val,set])=>(
+            <div key={lbl}>
+              <p style={{color:"rgba(255,255,255,.3)",fontSize:10,fontWeight:"700",textTransform:"uppercase",letterSpacing:".1em",marginBottom:6}}>{lbl}</p>
+              <input style={IS} value={val} onChange={e=>set(e.target.value)} placeholder={lbl}/>
+            </div>
+          ))}
+          <div>
+            <p style={{color:"rgba(255,255,255,.3)",fontSize:10,fontWeight:"700",textTransform:"uppercase",letterSpacing:".1em",marginBottom:6}}>Bio</p>
+            <textarea style={{...IS,height:80,resize:"none"}} value={bio} onChange={e=>setBio(e.target.value)} placeholder="Short description..."/>
+          </div>
+          <button onClick={saveEdits} disabled={saving} style={{...Btn.primary,opacity:saving?.6:1}}>{saving?"Saving...":"Save changes"}</button>
+        </div>
+      ) : (
+        <>
+          <div style={{...CardStyle,marginBottom:12,textAlign:"center"}}>
+            <div style={{width:64,height:64,borderRadius:"50%",background:"linear-gradient(135deg,#3B82F6,#6366F1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:"700",color:"#fff",margin:"0 auto 12px"}}>{initials}</div>
+            <p style={{color:"#fff",fontSize:17,fontWeight:"700",marginBottom:4}}>{name||"—"}</p>
+            <p style={{color:"rgba(255,255,255,0.4)",fontSize:12,marginBottom:4}}>{role||"—"}{sector?" · "+sector:""}</p>
+            <p style={{color:"rgba(255,255,255,0.55)",fontSize:12,lineHeight:1.7}}>{bio}</p>
+          </div>
+          <div style={{...CardStyle,marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:viz.visible?12:0}}>
+              <Label>Visibility</Label>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{width:7,height:7,borderRadius:"50%",background:viz.visible?"#10B981":"rgba(255,255,255,0.2)"}}/>
+                <span style={{color:viz.visible?"#10B981":"rgba(255,255,255,0.3)",fontSize:11,fontWeight:"600"}}>{viz.visible?"Active":"Hidden"}</span>
+              </div>
+            </div>
+            {viz.visible&&(
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {viz.openFor.map(t=><span key={t} style={{background:"rgba(59,130,246,0.15)",color:"#60A5FA",fontSize:10,padding:"3px 10px",borderRadius:20,fontWeight:"600"}}>{t}</span>)}
+              </div>
+            )}
+          </div>
+          <button style={{...Btn.primary,marginBottom:10}} onClick={()=>go("visibility")}>Manage visibility →</button>
+          <button style={{...Btn.ghost,marginBottom:10}} onClick={()=>go("notifs","notifs")}>View alerts</button>
+          <button onClick={onSignOut} style={{...Btn.ghost,color:"rgba(239,68,68,.7)",borderColor:"rgba(239,68,68,.2)",background:"rgba(239,68,68,.05)"}}>Sign out</button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── VISIBILITY ─────────────────────────────────────────────
+function VisibilityScreen({viz,setViz,onBack}) {
+  const [local,setLocal]=useState({...viz});
+  const toggle=type=>setLocal(v=>({...v,openFor:v.openFor.includes(type)?v.openFor.filter(t=>t!==type):[...v.openFor,type]}));
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <button style={Btn.back} onClick={onBack}>← Back</button>
+      <h2 style={{...T.pageTitle,marginBottom:6}}>My Visibility</h2>
+      <p style={{color:"rgba(255,255,255,0.35)",fontSize:12,marginBottom:22}}>Control how you can be reached via Relay.</p>
+      <Card style={{marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <p style={{color:"#fff",fontSize:13,fontWeight:"600",marginBottom:4}}>Accessible via introduction</p>
+            <p style={{color:"rgba(255,255,255,0.35)",fontSize:11}}>Others can request intros toward you</p>
+          </div>
+          <button onClick={()=>setLocal(v=>({...v,visible:!v.visible}))} style={{width:48,height:26,borderRadius:13,background:local.visible?"#3B82F6":"rgba(255,255,255,0.1)",border:"none",cursor:"pointer",position:"relative",flexShrink:0,transition:"background 0.2s"}}>
+            <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:local.visible?25:3,transition:"left 0.2s",boxShadow:"0 2px 6px rgba(0,0,0,0.3)"}}/>
+          </button>
+        </div>
+      </Card>
+      {local.visible&&(
+        <>
+          <Card style={{marginBottom:12}}>
+            <Label>Open for</Label>
+            <p style={{color:"rgba(255,255,255,0.35)",fontSize:11,marginBottom:12,marginTop:4}}>Types of requests you accept</p>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {REQ_TYPES.map(type=>{
+                const on=local.openFor.includes(type);
+                return <button key={type} onClick={()=>toggle(type)} style={{background:on?"#3B82F6":"rgba(255,255,255,0.05)",color:on?"#fff":"rgba(255,255,255,0.4)",border:on?"none":"1px solid rgba(255,255,255,0.08)",borderRadius:20,padding:"7px 14px",fontSize:11,fontWeight:"600",cursor:"pointer"}}>{type}</button>;
+              })}
+            </div>
+          </Card>
+          <Card style={{marginBottom:22}}>
+            <Label>Visible bio</Label>
+            <textarea style={{...InputStyle,height:80,resize:"none",marginTop:8}} value={local.bio} onChange={e=>setLocal(v=>({...v,bio:e.target.value}))} placeholder="What others will see about you..."/>
+          </Card>
+        </>
+      )}
+      <button style={Btn.primary} onClick={()=>{setViz(local);onBack();}}>Save settings →</button>
+    </div>
+  );
+}
+
+// ── CONFIRM ────────────────────────────────────────────────
+function ConfirmScreen({onDone}) {
+  return (
+    <div style={{padding:"24px 20px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"88%"}} className="fu">
+      <div style={{width:80,height:80,borderRadius:24,background:"rgba(59,130,246,0.15)",border:"1px solid rgba(59,130,246,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,marginBottom:24}}>⇢</div>
+      <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.25)",borderRadius:20,padding:"5px 14px",marginBottom:20}}>
+        <div style={{width:6,height:6,borderRadius:"50%",background:"#10B981"}}/>
+        <span style={{color:"#10B981",fontSize:11,fontWeight:"600",letterSpacing:"0.04em"}}>MANDATE ISSUED</span>
+      </div>
+      <h2 style={{color:"#fff",fontSize:24,fontWeight:"800",letterSpacing:"-0.03em",marginBottom:12,textAlign:"center"}}>Request Sent</h2>
+      <p style={{color:"rgba(255,255,255,0.45)",fontSize:13,lineHeight:1.8,textAlign:"center",maxWidth:270,marginBottom:32}}>Your mandate has been transmitted to the connector. The target will be notified if the introduction is accepted.</p>
+      <div style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:20,padding:"7px 18px",color:"rgba(255,255,255,0.25)",fontSize:10,letterSpacing:"0.1em",fontWeight:"600",marginBottom:32}}>CONSENT · TRACEABILITY · TRUST</div>
+      <button style={Btn.primary} onClick={onDone}>Back to home</button>
+    </div>
+  );
+}
+
+// ── NETWORK SCREEN ─────────────────────────────────────────
+function NetworkScreen({supabase, inviterName, inviterRole, inviterId}) {
+  const {useState, useEffect} = React;
+  const [invitations, setInvitations] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [copied, setCopied] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [importPreview, setImportPreview] = useState([]);
+  const [selected, setSelected] = useState({});
+  const [importStep, setImportStep] = useState("idle");
+  const [search, setSearch] = useState("");
+
+  useEffect(()=>{ load(); },[]);
+
+  const load = async () => {
+    if(!inviterId) return;
+    setLoading(true);
+    try {
+      const r = await supabase.from("invitations").select("*").eq("inviter_id", inviterId).order("created_at",{ascending:false});
+      if(r.data) setInvitations(r.data);
+      else console.log("No invitations found", r.error);
+    } catch(e){ console.error(e); }
+    setLoading(false);
+  };
+
+  const getLink = () => window.location.origin+"/invite.html?uid="+encodeURIComponent(inviterId)+"&from="+encodeURIComponent(inviterName)+"&role="+encodeURIComponent(inviterRole);
+
+  // ── vCard parser ─────────────────────────────────────────
+  const parseVCard = (text) => {
+    const contacts = [];
+    const cards = text.split(/BEGIN:VCARD/i).filter(c=>c.trim());
+    cards.forEach(card => {
+      const getName = () => {
+        const fn = card.match(/FN[^:]*:(.*)/i);
+        if(fn) return fn[1].trim();
+        const n = card.match(/^N[;:](.*)/im);
+        if(n) { const parts = n[1].split(";"); return [parts[1],parts[0]].filter(Boolean).join(" ").trim(); }
+        return null;
+      };
+      const getPhone = () => {
+        const m = card.match(/TEL[^:]*:([\d\s\+\-\(\)]+)/i);
+        return m ? m[1].trim() : null;
+      };
+      const getEmail = () => {
+        const m = card.match(/EMAIL[^:]*:([^\r\n]+)/i);
+        return m ? m[1].trim() : null;
+      };
+      const name = getName();
+      if(name) contacts.push({ name, phone: getPhone(), email: getEmail(), id: Math.random().toString(36).slice(2) });
+    });
+    return contacts;
+  };
+
+  const handleVCardFile = (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const parsed = parseVCard(ev.target.result);
+      setImportPreview(parsed);
+      const sel = {};
+      parsed.forEach(c => sel[c.id] = true);
+      setSelected(sel);
+      setImportStep("preview");
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const toggleSelect = (id) => setSelected(s => ({...s, [id]: !s[id]}));
+  const selectedContacts = importPreview.filter(c => selected[c.id]);
+
+  // ── Vérifier si un contact existe déjà ─────────────────
+  const isDuplicate = (phone, email) => {
+    const cleanPhone = (phone||"").replace(/\D/g,"");
+    return invitations.some(i => {
+      const iPhone = (i.contact_phone||"").replace(/\D/g,"");
+      const emailMatch = email && i.contact_email && i.contact_email.toLowerCase() === email.toLowerCase();
+      const phoneMatch = cleanPhone && iPhone && iPhone === cleanPhone;
+      return emailMatch || phoneMatch;
+    });
+  };
+
+  const saveImported = async () => {
+    if(selectedContacts.length === 0) return;
+    setImportStep("saving");
+
+    // Filtrer les doublons
+    const newContacts = selectedContacts.filter(c => !isDuplicate(c.phone, c.email));
+    const skipped = selectedContacts.length - newContacts.length;
+
+    if(newContacts.length === 0) {
+      alert(`All ${selectedContacts.length} contacts already exist in your Network.`);
+      setImportStep("idle");
+      setImportPreview([]);
+      setSelected({});
+      return;
+    }
+
+    const entries = newContacts.map(c => ({
+      inviter_id: inviterId,
+      inviter_name: inviterName,
+      contact_name: c.name,
+      contact_phone: c.phone || null,
+      contact_email: c.email || null,
+      status: "pending",
+    }));
+    const {data, error} = await supabase.from("invitations").insert(entries).select();
+    if(!error && data) setInvitations(inv => [...data, ...inv]);
+    if(skipped > 0) alert(`${newContacts.length} contacts added. ${skipped} already in your Network were skipped.`);
+    setImportStep("idle");
+    setImportPreview([]);
+    setSelected({});
+  };
+
+  const addContact = async () => {
+    if(!newName.trim()) return;
+
+    // Vérifier doublon
+    if(isDuplicate(newPhone.trim(), newEmail.trim())) {
+      alert("This contact already exists in your Network (same email or phone).");
+      return;
+    }
+
+    const entry = {
+      inviter_id: inviterId,
+      inviter_name: inviterName,
+      contact_name: newName.trim(),
+      contact_phone: newPhone.trim() || null,
+      contact_email: newEmail.trim() || null,
+      status: "pending",
+    };
+    const {data, error} = await supabase.from("invitations").insert(entry).select().single();
+    if(!error && data) setInvitations(inv => [data, ...inv]);
+    setNewName(""); setNewPhone(""); setNewEmail(""); setShowAdd(false);
+  };
+
+  const getWA = c => {
+    const link = getLink();
+    const firstName = c.contact_name.split(" ")[0];
+    const msg = "Hi "+firstName+", I'd like to invite you to Relay, my trusted professional introduction network. Join here: "+link;
+    return "https://wa.me/"+(c.contact_phone||"").replace(/\D/g,"")+"?text="+encodeURIComponent(msg);
+  };
+
+  const copyLink = id => {
+    navigator.clipboard.writeText(getLink());
+    setCopied(id); setTimeout(()=>setCopied(null), 2000);
+  };
+
+  const [selContact, setSelContact] = useState(null);
+
+  // ── CONTACT PROFILE ──────────────────────────────────────
+  if(selContact) {
+    const score = calcRelayScore({
+      role: selContact.contact_role||"",
+      sector: selContact.contact_sector||"",
+      accepted_invite: true,
+      intros_count: selContact.intros_count||0,
+      times_requested: selContact.times_requested||0,
+    });
+    const scoreColor = score>=80?"#10B981":score>=65?"#3B82F6":"#F59E0B";
+    return (
+      <div style={{padding:"24px 20px 20px"}} className="fu">
+        <button onClick={()=>setSelContact(null)} style={Btn.back}>← Back</button>
+        <div style={{textAlign:"center",marginBottom:24}}>
+          <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#064E3B,#10B981)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,fontWeight:"700",color:"#fff",margin:"0 auto 16px"}}>{getInitials(selContact.contact_name)}</div>
+          <h2 style={{color:"#fff",fontSize:22,fontWeight:"800",letterSpacing:"-.03em",marginBottom:4}}>{selContact.contact_name}</h2>
+          <p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>{selContact.contact_role||"—"}{selContact.contact_sector?" · "+selContact.contact_sector:""}</p>
+        </div>
+
+        {/* Score */}
+        <div style={{...CardStyle,marginBottom:12,textAlign:"center"}}>
+          <p style={{color:"rgba(255,255,255,.3)",fontSize:10,fontWeight:"700",textTransform:"uppercase",letterSpacing:".1em",marginBottom:8}}>Relay Score</p>
+          <p style={{color:scoreColor,fontSize:48,fontWeight:"900",letterSpacing:"-.03em",marginBottom:4}}>{score}</p>
+          <p style={{color:"rgba(255,255,255,.3)",fontSize:11}}>Based on activity & profile</p>
+        </div>
+
+        {/* Stats */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:12}}>
+          {[
+            {label:"Intros faites",val:selContact.intros_count||0,color:"#3B82F6"},
+            {label:"Fois demandé",val:selContact.times_requested||0,color:"#10B981"},
+            {label:"A rejoint",val:"✓",color:"#10B981"},
+          ].map(st=>(
+            <div key={st.label} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:14,padding:"14px 10px",textAlign:"center"}}>
+              <p style={{color:st.color,fontSize:20,fontWeight:"800"}}>{st.val}</p>
+              <p style={{color:"rgba(255,255,255,.3)",fontSize:9,marginTop:4,textTransform:"uppercase",letterSpacing:".06em",lineHeight:1.3}}>{st.label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Contact info */}
+        <div style={{...CardStyle,marginBottom:16}}>
+          {selContact.contact_email && <p style={{color:"rgba(255,255,255,.5)",fontSize:12,marginBottom:6}}>📧 {selContact.contact_email}</p>}
+          {selContact.contact_phone && <p style={{color:"rgba(255,255,255,.5)",fontSize:12}}>📱 {selContact.contact_phone}</p>}
+        </div>
+
+        {selContact.contact_phone && (
+          <a href={"https://wa.me/"+(selContact.contact_phone||"").replace(/\D/g,"")} target="_blank" rel="noreferrer" style={{...Btn.primary,textDecoration:"none",textAlign:"center",display:"block",marginBottom:10,background:"#25D366"}}>
+            💬 WhatsApp
+          </a>
+        )}
+        <button style={Btn.ghost} onClick={()=>setSelContact(null)}>← Back to Network</button>
+      </div>
+    );
+  }
+
+  const searchFilter = i => !search.trim() || i.contact_name?.toLowerCase().includes(search.toLowerCase()) || i.contact_phone?.includes(search) || i.contact_email?.toLowerCase().includes(search.toLowerCase());
+  const pending = invitations.filter(i=>i.status==="pending").filter(searchFilter);
+  const joined = invitations.filter(i=>i.status==="accepted").filter(searchFilter);
+
+  // ── IMPORT PREVIEW SCREEN ────────────────────────────────
+  if(importStep === "preview") return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <button onClick={()=>{setImportStep("idle");setImportPreview([]);}} style={Btn.back}>← Back</button>
+      <h2 style={{...T.pageTitle,marginBottom:4}}>Select contacts</h2>
+      <p style={{color:"rgba(255,255,255,.35)",fontSize:12,marginBottom:16}}>{importPreview.length} contacts found · {selectedContacts.length} selected</p>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <button onClick={()=>{const all={};importPreview.forEach(c=>all[c.id]=true);setSelected(all);}} style={{...Btn.ghost,width:"auto",padding:"8px 14px",fontSize:12}}>Select all</button>
+        <button onClick={()=>setSelected({})} style={{...Btn.ghost,width:"auto",padding:"8px 14px",fontSize:12}}>Deselect all</button>
+      </div>
+      <div style={{maxHeight:400,overflowY:"auto",marginBottom:16}}>
+        {importPreview.map(c=>{
+          const dup = isDuplicate(c.phone, c.email);
+          return (
+          <div key={c.id} onClick={()=>!dup&&toggleSelect(c.id)} style={{...CardStyle,display:"flex",alignItems:"center",gap:12,marginBottom:8,cursor:dup?"not-allowed":"pointer",borderColor:dup?"rgba(239,68,68,.3)":selected[c.id]?"rgba(59,130,246,.5)":"rgba(255,255,255,.07)",background:dup?"rgba(239,68,68,.05)":selected[c.id]?"rgba(59,130,246,.08)":"rgba(255,255,255,.04)",opacity:dup?.6:1}}>
+            <div style={{width:20,height:20,borderRadius:"50%",border:"2px solid",borderColor:dup?"#EF4444":selected[c.id]?"#3B82F6":"rgba(255,255,255,.2)",background:dup?"transparent":selected[c.id]?"#3B82F6":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              {dup ? <span style={{color:"#EF4444",fontSize:10}}>✕</span> : selected[c.id] && <svg width="10" height="10" fill="none" stroke="white" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>}
+            </div>
+            <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:"700",color:"#fff",flexShrink:0}}>{getInitials(c.name)}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <p style={{color:"#fff",fontSize:13,fontWeight:"600",marginBottom:2}}>{c.name}</p>
+              <p style={{color:"rgba(255,255,255,.35)",fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.phone||c.email||"No contact info"}</p>
+            </div>
+            {dup && <span style={{color:"#EF4444",fontSize:10,fontWeight:"600",flexShrink:0}}>Already added</span>}
+          </div>
+          );
+        })}
+      </div>
+      <button onClick={saveImported} disabled={selectedContacts.length===0||importStep==="saving"} style={{...Btn.primary,opacity:selectedContacts.length===0?.5:1}}>
+        {importStep==="saving"?"Saving...":"Invite "+selectedContacts.length+" contacts →"}
+      </button>
+    </div>
+  );
+
+  return (
+    <div style={{padding:"24px 20px 20px"}} className="fu">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <h2 style={T.pageTitle}>My Network</h2>
+        <button onClick={()=>setShowAdd(true)} style={{background:"#3B82F6",color:"#fff",border:"none",borderRadius:10,padding:"8px 14px",fontSize:12,fontWeight:"700",cursor:"pointer"}}>+ Add</button>
+      </div>
+      <p style={{color:"rgba(255,255,255,.35)",fontSize:12,marginBottom:12}}>Invite contacts · track who joined.</p>
+      {/* Search */}
+      <div style={{position:"relative",marginBottom:16}}>
+        <svg style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",opacity:.4}} width="14" height="14" fill="none" stroke="white" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input style={{...InputStyle,paddingLeft:34}} placeholder="Search contacts..." value={search} onChange={e=>setSearch(e.target.value)}/>
+      </div>
+
+      {/* Import vCard button */}
+      <label style={{display:"block",marginBottom:20,cursor:"pointer"}}>
+        <div style={{background:"rgba(99,102,241,.08)",border:"1px dashed rgba(99,102,241,.3)",borderRadius:14,padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:36,height:36,borderRadius:10,background:"rgba(99,102,241,.15)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <svg width="18" height="18" fill="none" stroke="#818CF8" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.85"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+          </div>
+          <div style={{flex:1}}>
+            <p style={{color:"#818CF8",fontSize:13,fontWeight:"700",marginBottom:2}}>Import from contacts</p>
+            <p style={{color:"rgba(255,255,255,.3)",fontSize:11}}>Select a .vcf file from your phone</p>
+          </div>
+          <svg width="16" height="16" fill="none" stroke="rgba(255,255,255,.3)" strokeWidth="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <input type="file" accept=".vcf,text/vcard" onChange={handleVCardFile} style={{display:"none"}}/>
+      </label>
+
+      {showAdd && (
+        <div style={{background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",borderRadius:16,padding:16,marginBottom:20}}>
+          <p style={{color:"#fff",fontSize:13,fontWeight:"700",marginBottom:12}}>Add manually</p>
+          <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:12}}>
+            <input style={InputStyle} placeholder="Full name *" value={newName} onChange={e=>setNewName(e.target.value)}/>
+            <input style={InputStyle} placeholder="WhatsApp number (+212...)" value={newPhone} onChange={e=>setNewPhone(e.target.value)}/>
+            <input style={InputStyle} placeholder="Email (optional)" value={newEmail} onChange={e=>setNewEmail(e.target.value)}/>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button style={{...Btn.primary,flex:1,padding:"10px"}} onClick={addContact}>Add</button>
+            <button style={{...Btn.ghost,flex:1,padding:"10px"}} onClick={()=>setShowAdd(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Pending */}
+      {pending.length > 0 && (
+        <div style={{marginBottom:20}}>
+          <p style={{fontSize:10,fontWeight:"700",color:"rgba(255,255,255,.25)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12}}>Invited — waiting ({pending.length})</p>
+          {pending.map(c=>(
+            <div key={c.id} style={{...CardStyle,marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
+                <div style={{width:40,height:40,borderRadius:12,background:"linear-gradient(135deg,#1E3A5F,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:"700",color:"#fff",flexShrink:0}}>{getInitials(c.contact_name)}</div>
+                <div style={{flex:1}}>
+                  <p style={{color:"#fff",fontSize:13,fontWeight:"600"}}>{c.contact_name}</p>
+                  <p style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{c.contact_phone||c.contact_email||"No contact info"}</p>
+                </div>
+                <span style={{background:"rgba(251,191,36,.1)",color:"#FBB824",fontSize:10,padding:"3px 10px",borderRadius:20,fontWeight:"600",flexShrink:0}}>Pending</span>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                {c.contact_phone
+                  ? <a href={getWA(c)} target="_blank" rel="noreferrer" style={{...Btn.primary,flex:1,padding:"10px",fontSize:12,textDecoration:"none",textAlign:"center",display:"block"}}>Send WhatsApp</a>
+                  : <button onClick={()=>copyLink(c.id)} style={{...Btn.primary,flex:1,padding:"10px",fontSize:12}}>{copied===c.id?"Copied!":"Copy invite link"}</button>
+                }
+                <button onClick={()=>copyLink(c.id)} style={{...Btn.ghost,flex:1,padding:"10px",fontSize:12}}>{copied===c.id?"✓":"Copy link"}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Joined */}
+      {joined.length > 0 && (
+        <div style={{marginBottom:20}}>
+          <p style={{fontSize:10,fontWeight:"700",color:"rgba(255,255,255,.25)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12}}>Joined Relay ✓ ({joined.length})</p>
+          {joined.map(a=>(
+            <div key={a.id} onClick={()=>setSelContact(a)} style={{...CardStyle,display:"flex",alignItems:"center",gap:12,marginBottom:8,cursor:"pointer"}}>
+              <div style={{width:40,height:40,borderRadius:12,background:"linear-gradient(135deg,#064E3B,#10B981)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:"700",color:"#fff",flexShrink:0}}>{getInitials(a.contact_name)}</div>
+              <div style={{flex:1}}>
+                <p style={{color:"#fff",fontSize:13,fontWeight:"600"}}>{a.contact_name}</p>
+                <p style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{a.contact_role||a.contact_email||a.contact_phone||"Tap to view profile"}</p>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{background:"rgba(16,185,129,.15)",color:"#10B981",fontSize:10,padding:"3px 10px",borderRadius:20,fontWeight:"600",flexShrink:0}}>Joined ✓</span>
+                <svg width="14" height="14" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {invitations.length === 0 && !loading && (
+        <div style={{textAlign:"center",padding:"48px 0"}}>
+          <div style={{fontSize:40,marginBottom:12}}>👥</div>
+          <p style={{fontSize:14,fontWeight:"600",color:"rgba(255,255,255,.35)",marginBottom:8}}>No contacts yet</p>
+          <p style={{fontSize:12,lineHeight:1.7,color:"rgba(255,255,255,.2)"}}>Import your contacts or add manually.<br/>They'll get a personal invite link to join Relay.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── SHARED COMPONENTS / STYLES ─────────────────────────────
+const CardStyle = {background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:16,padding:"16px",cursor:"default"};
+function Card({children,style}) { return <div style={{...CardStyle,...style}}>{children}</div>; }
+function Label({children}) { return <p style={{color:"rgba(255,255,255,0.25)",fontSize:9,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:"700"}}>{children}</p>; }
+const InputStyle = {background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:12,padding:"13px 14px",color:"#fff",fontSize:13,fontFamily:"'Inter',sans-serif",width:"100%",boxSizing:"border-box"};
+
+const Btn = {
+  primary: {background:"#3B82F6",color:"#fff",border:"none",borderRadius:14,padding:"14px 20px",fontSize:14,fontWeight:"700",cursor:"pointer",width:"100%",letterSpacing:"-0.01em"},
+  ghost: {background:"rgba(59,130,246,0.1)",color:"#3B82F6",border:"1px solid rgba(59,130,246,0.2)",borderRadius:14,padding:"14px 20px",fontSize:14,fontWeight:"600",cursor:"pointer",width:"100%"},
+  back: {background:"none",border:"none",color:"rgba(255,255,255,0.4)",cursor:"pointer",fontSize:13,padding:0,marginBottom:20,fontWeight:"500",fontFamily:"'Inter',sans-serif"},
+};
+
+const T = {
+  pageTitle: {color:"#fff",fontSize:22,fontWeight:"800",letterSpacing:"-0.03em",marginBottom:0},
+  label: {color:"rgba(255,255,255,0.35)",fontSize:10,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:"700"},
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

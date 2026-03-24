@@ -138,7 +138,7 @@ function App() {
   },[]);
 
   const loadProfile = async (userId) => {
-    const {data} = await sb.from("profiles").select("*").eq("id",userId).single();
+    const {data} = await sb.from("profiles").select("*").eq("id",userId).maybeSingle();
 
     // Récupérer métadonnées LinkedIn si disponibles
     const { data:{ user } } = await sb.auth.getUser();
